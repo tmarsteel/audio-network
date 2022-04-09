@@ -3,6 +3,8 @@
 #include "runtime.hpp"
 #include "audio.hpp"
 #include "pins.hpp"
+#include "SPIFFS.h"
+#include "stdint.h"
 
 #define SAMPLES_PER_SECOND 44100
 
@@ -12,9 +14,9 @@ static const i2s_config_t i2s_config = {
   .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
   .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
   .communication_format = I2S_COMM_FORMAT_I2S,
-  .intr_alloc_flags = 0, // default interrupt priority
-  .dma_buf_count = 2,
-  .dma_buf_len = 64,
+  .intr_alloc_flags = 0,
+  .dma_buf_count = 8,
+  .dma_buf_len = 1024,
   .use_apll = true
 };
 
@@ -25,7 +27,18 @@ static const i2s_pin_config_t pin_config = {
   .data_in_num = I2S_PIN_NO_CHANGE
 };
 
+void mute() {
+  pinMode(PIN_MUTE, OUTPUT);
+  digitalWrite(PIN_MUTE, HIGH);
+}
+
+void unmute() {
+  pinMode(PIN_MUTE, OUTPUT);
+  digitalWrite(PIN_MUTE, LOW);
+}
+
 void setup() {
+  mute();
   Serial.begin(50000);
   esp_err_t err;
 
@@ -48,11 +61,27 @@ void setup() {
   }
 
   Serial.println("i2s initialized successfully.");
+
+  if (!SPIFFS.begin()) {
+    Serial.println("Failed to start SPIFFS");
+    panic();
+  }
+}
+
+size_t copy_spiffs_to_buffer_dual_channel(File fp, int16_t* buffer, size_t nSamples) {
+  size_t nBytesToCopy = nSamples * sizeof(uint16_t) * 2;
+  size_t nBytesCopied = 0;
+  while (fp.available() && nBytesCopied < nBytesToCopy) {
+    size_t nBytesCopiedNow = fp.readBytes((char*) &buffer[nBytesCopied], nBytesToCopy - nBytesCopied);
+    nBytesCopied += nBytesCopiedNow;
+  }
+
+  return nBytesCopied;
 }
 
 void loop() {
-  int bufferSampleCount = 3000 * 2;
-  int bufferSize = sizeof(int16_t) * bufferSampleCount;
+  int bufferSampleCount = SAMPLES_PER_SECOND / 4;
+  int bufferSize = sizeof(int16_t) * bufferSampleCount * 2;
   int16_t* buffer = (int16_t*) malloc(bufferSize);
   
   if (buffer == nullptr) {
@@ -60,22 +89,41 @@ void loop() {
     panic();
   }
 
-  generate_sine_wave_16bit_dual_channel(440, SAMPLES_PER_SECOND, 0.05, &buffer[0], 0, bufferSampleCount / 2);
-  Serial.println("Sine wave written to buffer.");
+  File fp = SPIFFS.open("/EMOTIONAL DAMAGE.wav");
+  if (!fp) {
+    Serial.println("Failed to open sound file");
+    panic();
+  }
+  fp.seek(0x2C);
+  Serial.printf("File size: %d\n", fp.size());
+
+  size_t bufferCap = copy_spiffs_to_buffer_dual_channel(fp, &buffer[0], bufferSampleCount);
+  adjust_volume_16bit_dual_channel(&buffer[0], bufferSampleCount, 0.05);
+
+  unmute();
 
   esp_err_t err;
   size_t bufferPos = 0;
   while (true) {
     size_t bytesWritten;
-    err = i2s_write(I2S_NUM_0, &buffer[0] + bufferPos, bufferSize - bufferPos, &bytesWritten, portMAX_DELAY);
+    err = i2s_write(I2S_NUM_0, &buffer[0] + bufferPos, bufferCap - bufferPos, &bytesWritten, portMAX_DELAY);
     if (err != ESP_OK) {
       Serial.printf("Failed to write bytes to the i2s DMA buffer: %d\n", err);
       panic();
     }
+    //Serial.printf("Wrote %d / %d bytes to the i2s buffer\n", bytesWritten, bufferCap - bufferPos);
     bufferPos += bytesWritten;
-    Serial.printf("Wrote %d bytes to the i2s buffer\n", bytesWritten);
-    if (bufferPos >= sizeof(buffer)) {
-      bufferPos = 0;
+
+    if (bufferPos == bufferCap) {
+      if (fp.available()) {
+        bufferCap = copy_spiffs_to_buffer_dual_channel(fp, &buffer[0], bufferSampleCount);
+        adjust_volume_16bit_dual_channel(&buffer[0], bufferSampleCount, 0.05);
+        bufferPos = 0;
+      } else {
+        Serial.println("Done");
+        mute();
+        panic();
+      }
     }
   }
 }

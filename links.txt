@@ -2,3 +2,4 @@ https://www.espressif.com/sites/default/files/documentation/esp32_datasheet_en.p
 https://github.com/espressif/esp-idf/blob/faed2a44aa737649baa51bdfd5191aae6033a77c/examples/peripherals/i2s/i2s_basic/main/i2s_example_main.c
 https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/i2s.html#overview
 https://cdn-learn.adafruit.com/downloads/pdf/adafruit-i2s-stereo-decoder-uda1334a.pdf
+https://blog.cmgresearch.com/2021/04/20/esp32-i2s-dma-buf-len-buf-count.html
