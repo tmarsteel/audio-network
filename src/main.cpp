@@ -51,7 +51,7 @@ void setup() {
 }
 
 void loop() {
-  int bufferSampleCount = 1000;
+  int bufferSampleCount = 3000 * 2;
   int bufferSize = sizeof(int16_t) * bufferSampleCount;
   int16_t* buffer = (int16_t*) malloc(bufferSize);
   
@@ -60,7 +60,7 @@ void loop() {
     panic();
   }
 
-  generate_sine_wave_16bit(440, SAMPLES_PER_SECOND, 0.05, &buffer[0], 0, bufferSampleCount);
+  generate_sine_wave_16bit_dual_channel(440, SAMPLES_PER_SECOND, 0.05, &buffer[0], 0, bufferSampleCount / 2);
   Serial.println("Sine wave written to buffer.");
 
   esp_err_t err;
