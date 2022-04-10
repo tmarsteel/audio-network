@@ -31,13 +31,15 @@ void write_silence_16bit_dual_channel(int16_t* buffer, int sampleCount) {
     }
 }
 
-size_t copy_spiffs_to_buffer_dual_channel(File fp, int16_t* buffer, size_t nSamples) {
-  size_t nBytesToCopy = nSamples * sizeof(uint16_t) * 2;
-  size_t nBytesCopied = 0;
-  while (fp.available() && nBytesCopied < nBytesToCopy) {
-    size_t nBytesCopiedNow = fp.readBytes((char*) &buffer[nBytesCopied], nBytesToCopy - nBytesCopied);
-    nBytesCopied += nBytesCopiedNow;
-  }
+size_t copy_spiffs_to_buffer_dual_channel(File fp, int16_t *buffer, size_t nSamples)
+{
+    size_t nBytesToCopy = nSamples * sizeof(uint16_t) * 2;
+    size_t nBytesCopied = 0;
+    while (fp.available() && nBytesCopied < nBytesToCopy)
+    {
+        size_t nBytesCopiedNow = fp.readBytes((char *)&buffer[nBytesCopied], nBytesToCopy - nBytesCopied);
+        nBytesCopied += nBytesCopiedNow;
+    }
 
-  return nBytesCopied;
+    return nBytesCopied;
 }
