@@ -5,6 +5,9 @@
 #include "pins.hpp"
 #include "SPIFFS.h"
 #include "stdint.h"
+#include "led.hpp"
+#include "FreeRTOS.h"
+#include "config.hpp"
 
 #define SAMPLES_PER_SECOND 44100
 
@@ -66,64 +69,14 @@ void setup() {
     Serial.println("Failed to start SPIFFS");
     panic();
   }
-}
 
-size_t copy_spiffs_to_buffer_dual_channel(File fp, int16_t* buffer, size_t nSamples) {
-  size_t nBytesToCopy = nSamples * sizeof(uint16_t) * 2;
-  size_t nBytesCopied = 0;
-  while (fp.available() && nBytesCopied < nBytesToCopy) {
-    size_t nBytesCopiedNow = fp.readBytes((char*) &buffer[nBytesCopied], nBytesToCopy - nBytesCopied);
-    nBytesCopied += nBytesCopiedNow;
-  }
-
-  return nBytesCopied;
+  led_initialize();
+  led_set_indicated_device_state(DEVICE_STATE_DISCONNECTED);
+  
+  config_initialize();
 }
 
 void loop() {
-  int bufferSampleCount = SAMPLES_PER_SECOND / 4;
-  int bufferSize = sizeof(int16_t) * bufferSampleCount * 2;
-  int16_t* buffer = (int16_t*) malloc(bufferSize);
-  
-  if (buffer == nullptr) {
-    Serial.println("Failed to create audio buffer: OOM");
-    panic();
-  }
-
-  File fp = SPIFFS.open("/EMOTIONAL DAMAGE.wav");
-  if (!fp) {
-    Serial.println("Failed to open sound file");
-    panic();
-  }
-  fp.seek(0x2C);
-  Serial.printf("File size: %d\n", fp.size());
-
-  size_t bufferCap = copy_spiffs_to_buffer_dual_channel(fp, &buffer[0], bufferSampleCount);
-  adjust_volume_16bit_dual_channel(&buffer[0], bufferSampleCount, 0.05);
-
-  unmute();
-
-  esp_err_t err;
-  size_t bufferPos = 0;
-  while (true) {
-    size_t bytesWritten;
-    err = i2s_write(I2S_NUM_0, &buffer[0] + bufferPos, bufferCap - bufferPos, &bytesWritten, portMAX_DELAY);
-    if (err != ESP_OK) {
-      Serial.printf("Failed to write bytes to the i2s DMA buffer: %d\n", err);
-      panic();
-    }
-    //Serial.printf("Wrote %d / %d bytes to the i2s buffer\n", bytesWritten, bufferCap - bufferPos);
-    bufferPos += bytesWritten;
-
-    if (bufferPos == bufferCap) {
-      if (fp.available()) {
-        bufferCap = copy_spiffs_to_buffer_dual_channel(fp, &buffer[0], bufferSampleCount);
-        adjust_volume_16bit_dual_channel(&buffer[0], bufferSampleCount, 0.05);
-        bufferPos = 0;
-      } else {
-        Serial.println("Done");
-        mute();
-        panic();
-      }
-    }
-  }
+  vTaskDelete(NULL);
 }
+
