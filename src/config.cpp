@@ -6,12 +6,13 @@
 #include "led.hpp"
 #include <SPIFFS.h>
 
-static QueueHandle_t q_config_button_pressed;
+volatile static QueueHandle_t q_config_button_pressed;
 
 void IRAM_ATTR interrupt_handler_config_button_pressed()
 {
     // error irrelevant
-    xQueueSendToBackFromISR(q_config_button_pressed, NULL, NULL);
+    size_t dummy_data = 123;
+    xQueueSendToBackFromISR(q_config_button_pressed, &dummy_data, NULL);
 }
 
 void config_task(void *pvParameters)
@@ -19,16 +20,19 @@ void config_task(void *pvParameters)
     while (true)
     {
         size_t trigger_payload;
-        if (xQueueReceive(q_config_button_pressed, &trigger_payload, portMAX_DELAY) == pdTRUE)
+        if (xQueueReceive(q_config_button_pressed, &trigger_payload, 0) == pdTRUE)
         {
             Serial.println("Entering config mode");
             led_set_indicated_device_state(device_state_t::DEVICE_STATE_CONFIG);
+            // TODO: implement BLE TX+RX of config
         }
     }
 }
 
 void config_initialize()
 {
+    pinMode(PIN_CONFIG_MODE_BUTTON, INPUT_PULLUP);
+
     if (!SPIFFS.begin())
     {
         Serial.println("Failed to start SPIFFS");
@@ -41,9 +45,6 @@ void config_initialize()
         Serial.println("Failed to create a queue for config button presses: OOM");
         panic();
     }
-
-    pinMode(PIN_CONFIG_MODE, INPUT_PULLDOWN);
-    attachInterrupt(PIN_CONFIG_MODE, interrupt_handler_config_button_pressed, FALLING);
 
     TaskHandle_t configTaskHandle;
     BaseType_t rtosResult = xTaskCreate(
@@ -58,4 +59,6 @@ void config_initialize()
         Serial.println("Failed to start config interface: OOM");
         panic();
     }
+
+    attachInterrupt(digitalPinToInterrupt(PIN_CONFIG_MODE_BUTTON), interrupt_handler_config_button_pressed, FALLING);
 }
