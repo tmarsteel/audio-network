@@ -3,7 +3,6 @@
 #include "runtime.hpp"
 #include "audio.hpp"
 #include "pins.hpp"
-#include "SPIFFS.h"
 #include "stdint.h"
 #include "led.hpp"
 #include "FreeRTOS.h"
@@ -69,12 +68,6 @@ void setup()
 
     Serial.println("i2s initialized successfully.");
 
-    if (!SPIFFS.begin())
-    {
-        Serial.println("Failed to start SPIFFS");
-        panic();
-    }
-
     led_initialize();
     led_set_indicated_device_state(DEVICE_STATE_DISCONNECTED);
 
@@ -83,5 +76,8 @@ void setup()
 
 void loop()
 {
+    // the arduino compatibility layer launces a freertos task that
+    // keeps on calling this one. We don't need it, as all of our code
+    // runs via freertos, too.
     vTaskDelete(NULL);
 }
