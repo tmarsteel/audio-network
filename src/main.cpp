@@ -7,6 +7,7 @@
 #include "led.hpp"
 #include "FreeRTOS.h"
 #include "config.hpp"
+#include "network.hpp"
 
 #define SAMPLES_PER_SECOND 44100
 
@@ -72,6 +73,7 @@ void setup()
     led_set_indicated_device_state(DEVICE_STATE_DISCONNECTED);
 
     config_initialize();
+    network_initialize();
 }
 
 void loop()
