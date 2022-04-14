@@ -1,4 +1,10 @@
 #define NETWORK_TASK_NAME "network"
 
+#define NETWORK_EVENT_GROUP_BIT_CONNECTED          0b0001
+#define NETWORK_EVENT_GROUP_BIT_RECONNECT_COOLDOWN 0b0010
+
+#define NETWORK_MAX_CONNECT_RETRY_ATTEMPTS 10
+#define NETWORK_RECONNECT_COOLDOWN_MILLIS  1000
+
 /** must be called once for setup */
 void network_initialize();

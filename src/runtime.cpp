@@ -24,7 +24,7 @@ static const char runtime_hex_chars[16] = {'0', '1', '2', '3', '4', '5', '6', '7
 char* format_hex(uint8_t *data, size_t len)
 {
     char *blob = (char *)malloc(sizeof(uint8_t) * len * 2 + 1);
-    blob[len] = 0;
+    blob[len * 2] = 0;
 
     for (size_t i = 0; i < len; i++)
     {

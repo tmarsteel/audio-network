@@ -8,6 +8,7 @@
 #include "FreeRTOS.h"
 #include "config.hpp"
 #include "network.hpp"
+#include <esp_event_loop.h>
 
 #define SAMPLES_PER_SECOND 44100
 
@@ -44,6 +45,10 @@ void setup()
 {
     mute();
     Serial.begin(50000);
+    esp_log_level_set("*", ESP_LOG_INFO);
+
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
     esp_err_t err;
 
     err = i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
