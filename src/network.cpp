@@ -12,7 +12,9 @@
 #include <esp_event_loop.h>
 #include <lwip/err.h>
 #include <lwip/sys.h>
-#include <nvs_flash.h>
+#include <lwip/dhcp.h>
+#include <lwip/udp.h>
+#include <AsyncUDP.h>
 
 static const char* LOGTAG = "network";
 
@@ -22,6 +24,14 @@ static EventGroupHandle_t network_event_group;
 #undef LOG_LOCAL_LEVEL
 #endif
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO
+
+ip4_addr_t network_get_broadcast_address(ip4_addr_t* sample_ip_in_network, ip4_addr_t* netmask) {
+    uint32_t network = sample_ip_in_network->addr & netmask->addr;
+    uint32_t boradcast_addr = network | (~netmask->addr);
+    return {
+        .addr = boradcast_addr
+    };
+}
 
 wifi_config_t network_await_config() {    
     config_wifi_t wifi_config;
@@ -102,7 +112,31 @@ static esp_err_t network_esp_event_handler(void* ctx, system_event_t* event) {
     return ESP_OK;
 }
 
-void network_task(void* pvParameters) {
+void network_task_reconnect_after_cooldown(void* pvParameters) {
+    while (true) {
+        EventBits_t networkEventBits = xEventGroupWaitBits(network_event_group, NETWORK_EVENT_GROUP_BIT_RECONNECT_COOLDOWN, pdFALSE, pdFALSE, portMAX_DELAY);
+        if ((networkEventBits & NETWORK_EVENT_GROUP_BIT_RECONNECT_COOLDOWN) > 0) {
+            vTaskDelay(NETWORK_RECONNECT_COOLDOWN_MILLIS * portTICK_RATE_MS);
+            xEventGroupClearBits(network_event_group, NETWORK_EVENT_GROUP_BIT_RECONNECT_COOLDOWN);
+            ESP_ERROR_CHECK(esp_wifi_connect());
+        }
+    }
+}
+
+void network_task_udp_boradcast_announcement(void* pvParameters) {
+    while(true) {
+        EventBits_t networkEventBits = xEventGroupWaitBits(network_event_group, NETWORK_EVENT_GROUP_BIT_CONNECTED, pdFALSE, pdFALSE, portMAX_DELAY);
+        if ((networkEventBits & NETWORK_EVENT_GROUP_BIT_CONNECTED) > 0) {
+            tcpip_adapter_ip_info_t ip_info;
+            ESP_ERROR_CHECK(tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info));
+            ip4_addr_t broadcas_address = network_get_broadcast_address(&ip_info.ip, &ip_info.netmask);
+            Serial.printf("Broadcast IP: %s\n", ip4addr_ntoa(&broadcas_address));
+            vTaskDelay(NETWORK_BROADCAST_ANNOUNCEMENT_INTERVAL_MILLIS * portTICK_RATE_MS);
+        }
+    }
+}
+
+void network_initialize() {
     network_event_group = xEventGroupCreate();
 
     tcpip_adapter_init();
@@ -125,29 +159,34 @@ void network_task(void* pvParameters) {
     Serial.printf("[network] WiFi started with MAC Address %s\n", mac_as_string);
     free(mac_as_string);
 
-    while (true) {
-        EventBits_t networkBits = xEventGroupWaitBits(network_event_group, NETWORK_EVENT_GROUP_BIT_RECONNECT_COOLDOWN, pdFALSE, pdFALSE, portMAX_DELAY);
-        if ((networkBits & NETWORK_EVENT_GROUP_BIT_RECONNECT_COOLDOWN) > 0) {
-            vTaskDelay(NETWORK_RECONNECT_COOLDOWN_MILLIS * portTICK_RATE_MS);
-            xEventGroupClearBits(network_event_group, NETWORK_EVENT_GROUP_BIT_RECONNECT_COOLDOWN);
-            ESP_ERROR_CHECK(esp_wifi_connect());
-        }
-    }
-}
-
-void network_initialize() {
-    TaskHandle_t configTaskHandle;
-    BaseType_t rtosResult = xTaskCreate(
-        network_task,
-        CONFIG_TASK_NAME,
-        configMINIMAL_STACK_SIZE * 10,
+    TaskHandle_t taskHandle;
+    BaseType_t rtosResult;
+    
+    rtosResult = xTaskCreate(
+        network_task_reconnect_after_cooldown,
+        "network-reconnect",
+        configMINIMAL_STACK_SIZE * 2,
         nullptr,
         tskIDLE_PRIORITY,
-        &configTaskHandle);
-
+        &taskHandle
+    );
     if (rtosResult != pdPASS)
     {
-        Serial.println("[network] Failed to start network interface: OOM");
+        Serial.println("[network] Failed to start network reconnect task: OOM");
+        panic();
+    }
+
+    rtosResult = xTaskCreate(
+        network_task_udp_boradcast_announcement,
+        "network-announce",
+        configMINIMAL_STACK_SIZE * 2,
+        nullptr,
+        tskIDLE_PRIORITY,
+        &taskHandle
+    );
+    if (rtosResult != pdPASS)
+    {
+        Serial.println("[network] Failed to start network announce task: OOM");
         panic();
     }
 }
