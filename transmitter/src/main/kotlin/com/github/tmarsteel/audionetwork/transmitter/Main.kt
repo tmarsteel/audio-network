@@ -1,8 +1,13 @@
+package com.github.tmarsteel.audionetwork.transmitter
+
+import com.github.tmarsteel.audionetwork.protocol.AudioReceiverAnnouncement
+import com.google.protobuf.InvalidProtocolBufferException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.nio.ByteBuffer
 import kotlin.concurrent.thread
 
 fun main(args: Array<String>) {
@@ -43,8 +48,19 @@ class BroadcastReceiver(val address: InetSocketAddress) {
         while(true) {
             try {
                 socket.receive(packet)
-                println("Received a packet of ${packet.length} bytes:\n${format(packet.data, packet.length)}")
-                println(String(packet.data, 0, packet.length))
+                val message = try {
+                    AudioReceiverAnnouncement.parseFrom(ByteBuffer.wrap(packet.data, 0, packet.length))
+                }
+                catch (ex: InvalidProtocolBufferException) {
+                    println("Received invalid protobuf data, ignoring.")
+                    continue
+                }
+                if (message.magicWord != 0x2C5DA044) {
+                    println("Received what seems to be valid protobuf, but the magic word is incorrect.")
+                    continue
+                }
+
+                println("Received announcement $message")
             } catch (ex: InterruptedException) {
                 if (closed) {
                     return

@@ -39,3 +39,11 @@ char* format_hex(uint8_t *data, size_t len)
 
     return blob;
 }
+
+uint16_t to_uint16_exact(size_t value) {
+    if (value > 0xFFFF) {
+        abort();
+    }
+
+    return (uint16_t) value;
+}

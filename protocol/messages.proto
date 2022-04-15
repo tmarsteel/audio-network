@@ -1,0 +1,11 @@
+syntax = "proto2";
+
+option java_multiple_files = true;
+option java_package = "com.github.tmarsteel.audionetwork.protocol";
+
+message AudioReceiverAnnouncement {
+	required uint32 magic_word = 1;
+	required uint64 mac_address = 2;
+	required string device_name = 4;
+	required bool currently_streaming = 5;
+}

@@ -40,7 +40,7 @@ boolean config_is_interface_active() {
     if (config_event_group == nullptr) {
         return false;
     }
-    
+
     return (xEventGroupGetBits(config_event_group) & EVENTGROUP_BIT_CONFIG_ACTIVE) > 0;
 }
 

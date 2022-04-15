@@ -13,8 +13,11 @@
 #include <lwip/err.h>
 #include <lwip/sys.h>
 #include <lwip/dhcp.h>
-#include <lwip/udp.h>
+#include <lwip/sockets.h>
 #include <AsyncUDP.h>
+#include <pb_encode.h>
+#include <pb_decode.h>
+#include "protogen/messages.pb.h"
 
 static const char* LOGTAG = "network";
 
@@ -120,6 +123,34 @@ static esp_err_t network_esp_event_handler(void* ctx, system_event_t* event) {
     return ESP_OK;
 }
 
+bool network_pb_encode_device_name(pb_ostream_t* stream, const pb_field_t* field, void* const* arg) {
+    if (!pb_encode_tag_for_field(stream, field)) {
+        return false;
+    }
+
+    static const char* deviceName = "Audio-Network Receiver";
+
+    return pb_encode_string(stream, (pb_byte_t*) deviceName, strlen(deviceName));
+}
+
+AudioReceiverAnnouncement network_initialize_announcement() {
+    uint8_t mac[6];
+    ESP_ERROR_CHECK(esp_wifi_get_mac(ESP_IF_WIFI_STA, mac));
+
+    uint64_t macAsLong = 0;
+    for (int i = 0;i < 6;i++) {
+        macAsLong |= ((uint64_t) mac[i]) << (i * 8);
+    }
+
+    AudioReceiverAnnouncement announcement = AudioReceiverAnnouncement_init_zero;
+    announcement.magic_word = 0x2C5DA044;
+    announcement.mac_address = macAsLong;
+    announcement.currently_streaming = false;
+    announcement.device_name.funcs.encode = network_pb_encode_device_name;
+
+    return announcement;
+}
+
 void network_task_reconnect_after_cooldown(void* pvParameters) {
     while (true) {
         EventBits_t networkEventBits = xEventGroupWaitBits(network_event_group, NETWORK_EVENT_GROUP_BIT_RECONNECT_COOLDOWN, pdFALSE, pdFALSE, portMAX_DELAY);
@@ -131,30 +162,43 @@ void network_task_reconnect_after_cooldown(void* pvParameters) {
     }
 }
 
-static unsigned char broadcast_buffer[1024] = "Hello, World!";
-
 void network_task_udp_boradcast_announcement(void* pvParameters) {
-    err_t lwip_err;
-    struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, 1024, PBUF_RAM);
-    udp_pcb* udp_pcb = udp_new();
-    LWIP_ERROR_CHECK(udp_bind(udp_pcb, IP_ADDR_ANY, 0));
+    pb_byte_t* protobuf_buffer = (pb_byte_t*) malloc(512);
+    int broadcast_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (broadcast_socket < 0) {
+        Serial.println("Failed to create a socket for publishing announcements");
+        abort();
+    }
+
+
+    // LWIP_ERROR_CHECK(udp_bind(udp_pcb, IP_ADDR_ANY, 0));
+
+    AudioReceiverAnnouncement announcement = network_initialize_announcement();
     
     while(true) {
         EventBits_t networkEventBits = xEventGroupWaitBits(network_event_group, NETWORK_EVENT_GROUP_BIT_CONNECTED, pdFALSE, pdFALSE, portMAX_DELAY);
         if ((networkEventBits & NETWORK_EVENT_GROUP_BIT_CONNECTED) > 0) {
+            pb_ostream_t pb_stream = pb_ostream_from_buffer(protobuf_buffer, 512);
+            if (!pb_encode(&pb_stream, AudioReceiverAnnouncement_fields, &announcement)) {
+                Serial.println("Buffer too small to hold announcement message.");
+                abort();
+            }
+
             tcpip_adapter_ip_info_t ip_info;
             ESP_ERROR_CHECK(tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info));
             ip4_addr_t broadcast_address_4 = network_get_broadcast_address(&ip_info.ip, &ip_info.netmask);
-            ip_addr_t* broadcast_address = (ip_addr_t*) malloc(sizeof(ip_addr_t));
-            broadcast_address->u_addr.ip4 = broadcast_address_4;
-            broadcast_address->type = lwip_ip_addr_type::IPADDR_TYPE_V4;
-            LWIP_ERROR_CHECK(udp_connect(udp_pcb, broadcast_address, NETWORK_PORT_ANNOUNCE));
-            p->payload = broadcast_buffer;
-            p->len = 1024;
-            p->tot_len = 1024;
-            LWIP_ERROR_CHECK(udp_sendto(udp_pcb, p, broadcast_address, NETWORK_PORT_ANNOUNCE));
-            free(broadcast_address);
-            Serial.printf("Sent broadcast to %s\n", ip4addr_ntoa(&broadcast_address_4));
+            sockaddr_in broadcast_socket_address;
+            broadcast_socket_address.sin_addr.s_addr = broadcast_address_4.addr;
+            broadcast_socket_address.sin_family = AF_INET;
+            broadcast_socket_address.sin_port = htons(NETWORK_PORT_ANNOUNCE);
+
+            int err = sendto(broadcast_socket, protobuf_buffer, pb_stream.bytes_written, 0, (struct sockaddr*) &broadcast_socket_address, sizeof(broadcast_socket_address));
+            if (err < 0) {
+                Serial.printf("Failed to send announcement: errno %d\n", errno);
+            } else {
+                Serial.printf("Sent broadcast to %s\n", ip4addr_ntoa(&broadcast_address_4));
+            }
+            
             vTaskDelay(NETWORK_ANNOUNCEMENT_INTERVAL_MILLIS * portTICK_RATE_MS);
         }
     }
