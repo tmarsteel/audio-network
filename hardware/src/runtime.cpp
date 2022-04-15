@@ -4,17 +4,21 @@
 
 void panic()
 {
-    pinMode(PIN_LED, OUTPUT);
+    pinMode(PIN_LED_RED, OUTPUT);
+    pinMode(PIN_LED_GREEN, OUTPUT);
+    pinMode(PIN_LED_BLUE, OUTPUT);
+    digitalWrite(PIN_LED_GREEN, HIGH);
+    digitalWrite(PIN_LED_BLUE, HIGH);
 
     while (true)
     {
-        digitalWrite(PIN_LED, HIGH);
+        digitalWrite(PIN_LED_RED, LOW);
         delay(150);
-        digitalWrite(PIN_LED, LOW);
+        digitalWrite(PIN_LED_RED, HIGH);
         delay(150);
-        digitalWrite(PIN_LED, HIGH);
+        digitalWrite(PIN_LED_RED, LOW);
         delay(150);
-        digitalWrite(PIN_LED, LOW);
+        digitalWrite(PIN_LED_RED, HIGH);
         delay(3000 - (150 * 3));
     }
 }

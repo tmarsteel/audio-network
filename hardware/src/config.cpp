@@ -9,6 +9,7 @@
 #include <esp_err.h>
 
 #define EVENTGROUP_BIT_WIFI_AVAILABLE 0b00000001
+#define EVENTGROUP_BIT_CONFIG_ACTIVE  0b00000010
 
 volatile static QueueHandle_t q_config_button_pressed;
 
@@ -19,7 +20,7 @@ void IRAM_ATTR interrupt_handler_config_button_pressed()
     xQueueSendToBackFromISR(q_config_button_pressed, &dummy_data, NULL);
 }
 
-static EventGroupHandle_t config_event_group;
+static EventGroupHandle_t config_event_group = nullptr;
 
 void config_task(void *pvParameters)
 {
@@ -29,10 +30,18 @@ void config_task(void *pvParameters)
         if (xQueueReceive(q_config_button_pressed, &trigger_payload, 0) == pdTRUE)
         {
             Serial.println("Entering config mode");
-            led_set_indicated_device_state(device_state_t::DEVICE_STATE_CONFIG);
+            xEventGroupSetBits(config_event_group, EVENTGROUP_BIT_CONFIG_ACTIVE);
             // TODO: implement BLE TX+RX of config
         }
     }
+}
+
+boolean config_is_interface_active() {
+    if (config_event_group == nullptr) {
+        return false;
+    }
+    
+    return (xEventGroupGetBits(config_event_group) & EVENTGROUP_BIT_CONFIG_ACTIVE) > 0;
 }
 
 void config_initialize()

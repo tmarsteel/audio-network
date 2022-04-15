@@ -18,7 +18,7 @@
 
 static const char* LOGTAG = "network";
 
-static EventGroupHandle_t network_event_group;
+static EventGroupHandle_t network_event_group = nullptr;
 
 #ifdef LOG_LOCAL_LEVEL
 #undef LOG_LOCAL_LEVEL
@@ -213,4 +213,21 @@ void network_initialize() {
         Serial.println("[network] Failed to start network announce task: OOM");
         panic();
     }
+}
+
+network_state_t network_get_state() {
+    if (network_event_group == nullptr) {
+        return network_state_t::NETWORK_STATE_DISCONNECTED;
+    }
+
+    EventBits_t stateBits = xEventGroupGetBits(network_event_group);
+    if ((stateBits & NETWORK_EVENT_GROUP_BIT_ACTIVE_STREAM) > 0) {
+        return network_state_t::NETWORK_STATE_STREAM_INCOMING;
+    }
+
+    if ((stateBits & NETWORK_EVENT_GROUP_BIT_CONNECTED)) {
+        return network_state_t::NETWORK_STATE_CONNECTED;
+    }
+
+    return network_state_t::NETWORK_STATE_DISCONNECTED;
 }

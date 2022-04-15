@@ -15,4 +15,6 @@ struct config_wifi_t {
 /** must be called once for setup */
 void config_initialize();
 
+boolean config_is_interface_active();
+
 esp_err_t config_await_and_get_wifi(config_wifi_t* pxConfig, TickType_t xTicksToWait);

@@ -3,105 +3,127 @@
 #include <math.h>
 #include "pins.hpp"
 #include "runtime.hpp"
-
-typedef enum {
-    LED_STATE_ON = 0,
-    LED_STATE_OFF = 1
-} led_state;
+#include "config.hpp"
+#include "network.hpp"
 
 struct led_phase_t {
-    led_state state;
+    boolean red;
+    boolean green;
+    boolean blue;
     int duration_millis;
 };
 
 static led_phase_t led_appearance_disconnected[2] = {
     {
-        .state = LED_STATE_ON,
-        .duration_millis = 800
+        .red = true,
+        .green = false,
+        .blue = false,
+        .duration_millis = 500
     },
     {
-        .state = LED_STATE_OFF,
-        .duration_millis = 800
+        .red = false,
+        .green = false,
+        .blue = false,
+        .duration_millis = 500
     }
 };
 
 static led_phase_t led_appearance_connected[1] = {
     {
-        .state = LED_STATE_ON,
+        .red = false,
+        .green = true,
+        .blue = false,
         .duration_millis = 1000
     }
 };
 
 static led_phase_t led_appearance_config[2] = {
     {
-        .state = LED_STATE_ON,
-        .duration_millis = 300
+        .red = false,
+        .green = false,
+        .blue = true,
+        .duration_millis = 500
     },
     {
-        .state = LED_STATE_OFF,
-        .duration_millis = 300
+        .red = false,
+        .green = false,
+        .blue = false,
+        .duration_millis = 500
     }
 };
 
-static device_state_t INDICATED_DEVICE_STATE = DEVICE_STATE_DISCONNECTED;
-void led_set_indicated_device_state(device_state_t state) {
-    INDICATED_DEVICE_STATE = state;
-}
-
-void led_apply_state(led_state state) {
-    if (state == led_state::LED_STATE_ON) {
-        digitalWrite(PIN_LED, HIGH);
+void led_apply_state(led_phase_t* state) {
+    if (state->red) {
+        digitalWrite(PIN_LED_RED, LOW);
     } else {
-        digitalWrite(PIN_LED, LOW);
+        digitalWrite(PIN_LED_RED, HIGH);
+    }
+
+    if (state->green) {
+        digitalWrite(PIN_LED_GREEN, LOW);
+    } else {
+        digitalWrite(PIN_LED_GREEN, HIGH);
+    }
+
+    if (state->blue) {
+        digitalWrite(PIN_LED_BLUE, LOW);
+    } else {
+        digitalWrite(PIN_LED_BLUE, HIGH);
     }
 }
 
-void led_get_appearance(device_state_t state, led_phase_t** pxPhases, size_t* pxLen) {
-    if (state == device_state_t::DEVICE_STATE_CONFIG) {
+void led_get_appearance(led_phase_t** pxPhases, size_t* pxLen) {
+    if (config_is_interface_active()) {
         *pxPhases = &led_appearance_config[0];
         *pxLen = 2;
+        return;
     }
-    else if (state == device_state_t::DEVICE_STATE_CONNECTED) {
-        *pxPhases = &led_appearance_connected[0];
-        *pxLen = 1;
-    }
-    else if (state == device_state_t::DEVICE_STATE_DISCONNECTED) {
-        *pxPhases = &led_appearance_disconnected[0];
-        *pxLen = 2;
-    }
-    else {
-        Serial.printf("Unknown device state %d, cannot determine LED appearance\n", state);
-        panic();
+
+    network_state_t network_state = network_get_state();
+    switch (network_state) {
+        case NETWORK_STATE_CONNECTED:
+        case NETWORK_STATE_STREAM_INCOMING:
+            *pxPhases = &led_appearance_connected[0];
+            *pxLen = 1;
+            break;
+        case NETWORK_STATE_DISCONNECTED:
+            *pxPhases = &led_appearance_disconnected[0];
+            *pxLen = 2;
+            break;
+        default:
+            Serial.println("Unknown device state, cannot determine LED appearance");
+            panic();
     }
 }
 
 void led_indicator_task(void* pvParameters) {
-    device_state_t currently_indicating = DEVICE_STATE_DISCONNECTED;
     led_phase_t* current_phases = &led_appearance_disconnected[0];
     size_t current_phases_len = sizeof(led_appearance_disconnected) / sizeof(led_phase_t);
-    led_get_appearance(currently_indicating, &current_phases, &current_phases_len);
+    led_get_appearance(&current_phases, &current_phases_len);
 
     size_t current_phase_offset = 0;
     unsigned long current_phase_started_at = millis();
 
-    led_apply_state(current_phases[0].state);
+    led_apply_state(&current_phases[0]);
 
     while (true) {
-        int passed_in_current_phase = (int) (millis() - current_phase_started_at);
+        led_phase_t* next_phases;
+        size_t next_phases_len;
+        led_get_appearance(&next_phases, &next_phases_len);
 
-        device_state_t state_now = INDICATED_DEVICE_STATE;
-        if (state_now != currently_indicating) {
-            currently_indicating = state_now;
-            led_get_appearance(currently_indicating, &current_phases, &current_phases_len);
-            size_t current_phase_offset = 0;
-            unsigned long current_phase_started_at = millis();
+        if (current_phases != next_phases) {
+            current_phases = next_phases;
+            current_phases_len = next_phases_len;
+            current_phase_offset = 0;
+            current_phase_started_at = millis();
 
-            led_apply_state(current_phases[0].state);
+            led_apply_state(&current_phases[0]);
             continue;
         }
 
         led_phase_t current_phase = current_phases[current_phase_offset];
 
+        int passed_in_current_phase = (int) (millis() - current_phase_started_at);
         if (passed_in_current_phase < current_phase.duration_millis) {
             size_t delay_millis = min(LED_MAX_REACTION_TIME_MILLIS, current_phase.duration_millis - passed_in_current_phase);
             vTaskDelay(delay_millis / portTICK_PERIOD_MS);
@@ -114,14 +136,19 @@ void led_indicator_task(void* pvParameters) {
             current_phase_offset = 0;
         }
         current_phase = current_phases[current_phase_offset];
-        led_apply_state(current_phase.state);
+        led_apply_state(&current_phase);
         
         current_phase_started_at = millis() - overshoot_duration;
     }
 }
 
 void led_initialize() {
-    pinMode(PIN_LED, OUTPUT);
+    pinMode(PIN_LED_RED, OUTPUT);
+    pinMode(PIN_LED_GREEN, OUTPUT);
+    pinMode(PIN_LED_BLUE, OUTPUT);
+    digitalWrite(PIN_LED_RED, HIGH);
+    digitalWrite(PIN_LED_GREEN, HIGH);
+    digitalWrite(PIN_LED_BLUE, HIGH);
     TaskHandle_t taskHandle;
     BaseType_t rtosResult;
     rtosResult = xTaskCreate(

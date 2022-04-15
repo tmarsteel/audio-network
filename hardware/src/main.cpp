@@ -75,7 +75,6 @@ void setup()
     Serial.println("i2s initialized successfully.");
 
     led_initialize();
-    led_set_indicated_device_state(DEVICE_STATE_DISCONNECTED);
 
     config_initialize();
     network_initialize();
