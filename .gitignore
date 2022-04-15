@@ -1,0 +1,16 @@
+# build tools
+.pio
+transmitter/build
+.gradle
+
+# IDE
+hardware/.vscode/.browse.c_cpp.db*
+hardware/.vscode/c_cpp_properties.json
+hardware/.vscode/launch.json
+hardware/.vscode/ipch
+
+.idea
+*.iml
+
+# credentials
+hardware/data/config/wifi.json

@@ -25,10 +25,18 @@ static EventGroupHandle_t network_event_group;
 #endif
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO
 
+#define LWIP_ERROR_CHECK(x) lwip_error_check(x, __FILE__, __LINE__)
+void lwip_error_check(err_t err_rc, const char* file, int line) {
+    if (err_rc != ERR_OK) {
+        Serial.printf("LWIP Error in %s on line %d: %s\n", file, line, lwip_strerr(err_rc));
+        abort();
+    }
+}
+
 ip4_addr_t network_get_broadcast_address(ip4_addr_t* sample_ip_in_network, ip4_addr_t* netmask) {
     uint32_t network = sample_ip_in_network->addr & netmask->addr;
     uint32_t boradcast_addr = network | (~netmask->addr);
-    return {
+    return  {
         .addr = boradcast_addr
     };
 }
@@ -123,15 +131,31 @@ void network_task_reconnect_after_cooldown(void* pvParameters) {
     }
 }
 
+static unsigned char broadcast_buffer[1024] = "Hello, World!";
+
 void network_task_udp_boradcast_announcement(void* pvParameters) {
+    err_t lwip_err;
+    struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, 1024, PBUF_RAM);
+    udp_pcb* udp_pcb = udp_new();
+    LWIP_ERROR_CHECK(udp_bind(udp_pcb, IP_ADDR_ANY, 0));
+    
     while(true) {
         EventBits_t networkEventBits = xEventGroupWaitBits(network_event_group, NETWORK_EVENT_GROUP_BIT_CONNECTED, pdFALSE, pdFALSE, portMAX_DELAY);
         if ((networkEventBits & NETWORK_EVENT_GROUP_BIT_CONNECTED) > 0) {
             tcpip_adapter_ip_info_t ip_info;
             ESP_ERROR_CHECK(tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info));
-            ip4_addr_t broadcas_address = network_get_broadcast_address(&ip_info.ip, &ip_info.netmask);
-            Serial.printf("Broadcast IP: %s\n", ip4addr_ntoa(&broadcas_address));
-            vTaskDelay(NETWORK_BROADCAST_ANNOUNCEMENT_INTERVAL_MILLIS * portTICK_RATE_MS);
+            ip4_addr_t broadcast_address_4 = network_get_broadcast_address(&ip_info.ip, &ip_info.netmask);
+            ip_addr_t* broadcast_address = (ip_addr_t*) malloc(sizeof(ip_addr_t));
+            broadcast_address->u_addr.ip4 = broadcast_address_4;
+            broadcast_address->type = lwip_ip_addr_type::IPADDR_TYPE_V4;
+            LWIP_ERROR_CHECK(udp_connect(udp_pcb, broadcast_address, NETWORK_PORT_ANNOUNCE));
+            p->payload = broadcast_buffer;
+            p->len = 1024;
+            p->tot_len = 1024;
+            LWIP_ERROR_CHECK(udp_sendto(udp_pcb, p, broadcast_address, NETWORK_PORT_ANNOUNCE));
+            free(broadcast_address);
+            Serial.printf("Sent broadcast to %s\n", ip4addr_ntoa(&broadcast_address_4));
+            vTaskDelay(NETWORK_ANNOUNCEMENT_INTERVAL_MILLIS * portTICK_RATE_MS);
         }
     }
 }
@@ -164,7 +188,7 @@ void network_initialize() {
     
     rtosResult = xTaskCreate(
         network_task_reconnect_after_cooldown,
-        "network-reconnect",
+        "net-reconnect",
         configMINIMAL_STACK_SIZE * 2,
         nullptr,
         tskIDLE_PRIORITY,
@@ -178,8 +202,8 @@ void network_initialize() {
 
     rtosResult = xTaskCreate(
         network_task_udp_boradcast_announcement,
-        "network-announce",
-        configMINIMAL_STACK_SIZE * 2,
+        "net-announce",
+        configMINIMAL_STACK_SIZE * 10,
         nullptr,
         tskIDLE_PRIORITY,
         &taskHandle
