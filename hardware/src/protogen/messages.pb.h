@@ -10,6 +10,12 @@
 #endif
 
 /* Struct definitions */
+typedef struct _AudioData { 
+    uint32_t samples_per_channel_and_second; 
+    uint32_t bytes_per_sample; 
+    pb_callback_t samples; 
+} AudioData;
+
 typedef struct _AudioReceiverAnnouncement { 
     uint32_t magic_word; 
     uint64_t mac_address; 
@@ -24,9 +30,14 @@ extern "C" {
 
 /* Initializer values for message structs */
 #define AudioReceiverAnnouncement_init_default   {0, 0, {{NULL}, NULL}, 0}
+#define AudioData_init_default                   {0, 0, {{NULL}, NULL}}
 #define AudioReceiverAnnouncement_init_zero      {0, 0, {{NULL}, NULL}, 0}
+#define AudioData_init_zero                      {0, 0, {{NULL}, NULL}}
 
 /* Field tags (for use in manual encoding/decoding) */
+#define AudioData_samples_per_channel_and_second_tag 1
+#define AudioData_bytes_per_sample_tag           2
+#define AudioData_samples_tag                    3
 #define AudioReceiverAnnouncement_magic_word_tag 1
 #define AudioReceiverAnnouncement_mac_address_tag 2
 #define AudioReceiverAnnouncement_device_name_tag 4
@@ -41,13 +52,23 @@ X(a, STATIC,   REQUIRED, BOOL,     currently_streaming,   5)
 #define AudioReceiverAnnouncement_CALLBACK pb_default_field_callback
 #define AudioReceiverAnnouncement_DEFAULT NULL
 
+#define AudioData_FIELDLIST(X, a) \
+X(a, STATIC,   REQUIRED, UINT32,   samples_per_channel_and_second,   1) \
+X(a, STATIC,   REQUIRED, UINT32,   bytes_per_sample,   2) \
+X(a, CALLBACK, REQUIRED, BYTES,    samples,           3)
+#define AudioData_CALLBACK pb_default_field_callback
+#define AudioData_DEFAULT NULL
+
 extern const pb_msgdesc_t AudioReceiverAnnouncement_msg;
+extern const pb_msgdesc_t AudioData_msg;
 
 /* Defines for backwards compatibility with code written before nanopb-0.4.0 */
 #define AudioReceiverAnnouncement_fields &AudioReceiverAnnouncement_msg
+#define AudioData_fields &AudioData_msg
 
 /* Maximum encoded size of messages (where known) */
 /* AudioReceiverAnnouncement_size depends on runtime parameters */
+/* AudioData_size depends on runtime parameters */
 
 #ifdef __cplusplus
 } /* extern "C" */

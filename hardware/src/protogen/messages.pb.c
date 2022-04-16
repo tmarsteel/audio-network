@@ -9,4 +9,7 @@
 PB_BIND(AudioReceiverAnnouncement, AudioReceiverAnnouncement, AUTO)
 
 
+PB_BIND(AudioData, AudioData, AUTO)
+
+
 

@@ -9,3 +9,9 @@ message AudioReceiverAnnouncement {
 	required string device_name = 4;
 	required bool currently_streaming = 5;
 }
+
+message AudioData {
+	required uint32 samples_per_channel_and_second = 1;
+	required uint32 bytes_per_sample = 2;
+	required bytes samples = 3;
+}

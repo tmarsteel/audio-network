@@ -18,6 +18,8 @@
 #include <pb_encode.h>
 #include <pb_decode.h>
 #include "protogen/messages.pb.h"
+#include "playback.hpp"
+#include "audio.hpp"
 
 static const char* LOGTAG = "network";
 
@@ -32,6 +34,14 @@ static EventGroupHandle_t network_event_group = nullptr;
 void lwip_error_check(err_t err_rc, const char* file, int line) {
     if (err_rc != ERR_OK) {
         Serial.printf("LWIP Error in %s on line %d: %s\n", file, line, lwip_strerr(err_rc));
+        abort();
+    }
+}
+
+#define SOCK_ERROR_CHECK(x) sock_error_check(x, __FILE__, __LINE__)
+void sock_error_check(int result, const char* file, int line) {
+    if (result < 0) {
+        Serial.printf("Socket error in %s on line %d: errno %d\n", file, line, errno);
         abort();
     }
 }
@@ -133,6 +143,76 @@ bool network_pb_encode_device_name(pb_ostream_t* stream, const pb_field_t* field
     return pb_encode_string(stream, (pb_byte_t*) deviceName, strlen(deviceName));
 }
 
+typedef struct {
+    // set by network_pb_decode_audio_samples
+    // that function will also set .len
+    audio_buffer_t* target;
+} pb_decode_audio_samples_ctx;
+
+bool network_pb_decode_audio_samples(pb_istream_t* stream, const pb_field_t* field, void** arg) {
+    audio_buffer_t* audio_buffer = playback_get_next_free_audio_buffer();
+    if (stream->bytes_left > audio_buffer->capacity) {
+        playback_hand_back_unused_buffer(audio_buffer);
+        return false;
+    }
+
+    pb_decode_audio_samples_ctx* context = (pb_decode_audio_samples_ctx*) (*arg);
+    context->target = audio_buffer;
+    context->target->len = stream->bytes_left;
+    bool success = pb_read(stream, (pb_byte_t*) context->target->data, stream->bytes_left);
+    if (!success) {
+        context->target = nullptr;
+        playback_hand_back_unused_buffer(audio_buffer);
+    }
+    return success;
+}
+
+bool network_pb_istream_from_socket_callback(pb_istream_t* stream, uint8_t* buffer, size_t count) {
+    if (count == 0) {
+        return true;
+    }
+
+    int socket = (int) (stream->state);
+    uint8_t one_byte;
+    if (buffer == NULL) {
+        assert(false);
+        int err = recv(socket, &one_byte, 1, 0);
+        if (err == 0) {
+            return count == 0;
+        }
+        if (err > 0) {
+            count -= err;
+        }
+
+        return false;
+    }
+
+    int bytes_received_total = 0;
+    do {
+        int bytes_received = recv(socket, buffer, count - bytes_received_total, 0);
+        if (bytes_received < 0) {
+            return false;
+        }
+
+        if (bytes_received == 0) {
+            stream->bytes_left = 0;
+            return true;
+        }
+
+        bytes_received_total += bytes_received;
+    } while (bytes_received_total < count);
+
+    return true;
+}
+
+pb_istream_t network_pb_istream_from_socket(int socket) {
+    return pb_istream_s {
+        .callback = network_pb_istream_from_socket_callback,
+        .state = (void*) socket,
+        .bytes_left = SIZE_MAX,
+    };
+}
+
 AudioReceiverAnnouncement network_initialize_announcement() {
     uint8_t mac[6];
     ESP_ERROR_CHECK(esp_wifi_get_mac(ESP_IF_WIFI_STA, mac));
@@ -149,6 +229,42 @@ AudioReceiverAnnouncement network_initialize_announcement() {
     announcement.device_name.funcs.encode = network_pb_encode_device_name;
 
     return announcement;
+}
+
+void network_handle_next_client(int server_socket) {
+    struct sockaddr_in clientAddr;
+    socklen_t clientAddrLen = (socklen_t) sizeof(clientAddr);
+    Serial.println("[network] waiting for a trasmitter to connect");
+    int client_socket = accept(server_socket, (sockaddr*) &clientAddr, &clientAddrLen);
+    Serial.printf("[network] transmitter %d connected, starting playback\n", clientAddr.sin_addr.s_addr);
+    SOCK_ERROR_CHECK(client_socket);
+
+    pb_istream_t pb_socket_stream = network_pb_istream_from_socket(client_socket);
+    while (true) {
+        pb_decode_audio_samples_ctx decode_context = {
+            .target = nullptr
+        };
+        AudioData receivedData;
+        receivedData.samples.funcs.decode = network_pb_decode_audio_samples;
+        receivedData.samples.arg = &decode_context;
+        if (!pb_decode_delimited(&pb_socket_stream, AudioData_fields, &receivedData)) {
+            Serial.printf("Failed to read audio data protobuf (%s), closing connection.\n", pb_socket_stream.errmsg);
+            shutdown(client_socket, 0);
+            close(client_socket);
+            return;
+        }
+
+        audio_buffer_t* audio_buffer = decode_context.target;
+        assert(audio_buffer != nullptr);
+        assert(receivedData.bytes_per_sample == 2); // TODO: implement proper error feedback to the transmitter
+        audio_buffer->samples_per_channel_and_second = receivedData.samples_per_channel_and_second;
+        adjust_volume_16bit_dual_channel((int16_t*) audio_buffer->data, audio_buffer->len / sizeof(int16_t) / 2, 0.05);
+        if (audio_buffer->len == 0) {
+            playback_hand_back_unused_buffer(audio_buffer);
+        } else {
+            playback_queue_audio(audio_buffer);
+        }
+    }
 }
 
 void network_task_reconnect_after_cooldown(void* pvParameters) {
@@ -169,9 +285,6 @@ void network_task_udp_boradcast_announcement(void* pvParameters) {
         Serial.println("Failed to create a socket for publishing announcements");
         abort();
     }
-
-
-    // LWIP_ERROR_CHECK(udp_bind(udp_pcb, IP_ADDR_ANY, 0));
 
     AudioReceiverAnnouncement announcement = network_initialize_announcement();
     
@@ -195,11 +308,31 @@ void network_task_udp_boradcast_announcement(void* pvParameters) {
             int err = sendto(broadcast_socket, protobuf_buffer, pb_stream.bytes_written, 0, (struct sockaddr*) &broadcast_socket_address, sizeof(broadcast_socket_address));
             if (err < 0) {
                 Serial.printf("Failed to send announcement: errno %d\n", errno);
-            } else {
-                Serial.printf("Sent broadcast to %s\n", ip4addr_ntoa(&broadcast_address_4));
             }
             
             vTaskDelay(NETWORK_ANNOUNCEMENT_INTERVAL_MILLIS * portTICK_RATE_MS);
+        }
+    }
+}
+
+void network_task_accept_audio_stream(void* pvParameters) {
+    sockaddr_in listen_sock_addr;
+    listen_sock_addr.sin_addr.s_addr = IP_ADDR_ANY->u_addr.ip4.addr;
+    listen_sock_addr.sin_family = AF_INET;
+    listen_sock_addr.sin_port = htons(NETWORK_PORT_AUDIO_RX);
+
+    while(true) {
+        EventBits_t networkEventBits = xEventGroupWaitBits(network_event_group, NETWORK_EVENT_GROUP_BIT_CONNECTED, pdFALSE, pdFALSE, portMAX_DELAY);
+        if ((networkEventBits & NETWORK_EVENT_GROUP_BIT_CONNECTED) > 0) {
+
+            int server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+            SOCK_ERROR_CHECK(server_socket);
+            SOCK_ERROR_CHECK(bind(server_socket, (sockaddr*) &listen_sock_addr, sizeof(listen_sock_addr)));
+            SOCK_ERROR_CHECK(listen(server_socket, 0));
+            Serial.println("[network] listen socket started");
+            while (true) {
+                network_handle_next_client(server_socket);
+            }
         }
     }
 }
@@ -255,6 +388,20 @@ void network_initialize() {
     if (rtosResult != pdPASS)
     {
         Serial.println("[network] Failed to start network announce task: OOM");
+        panic();
+    }
+
+    rtosResult = xTaskCreate(
+        network_task_accept_audio_stream,
+        "net-rx",
+        configMINIMAL_STACK_SIZE * 10,
+        nullptr,
+        tskIDLE_PRIORITY,
+        &taskHandle
+    );
+    if (rtosResult != pdPASS)
+    {
+        Serial.println("[network] Failed to start network rx task: OOM");
         panic();
     }
 }
