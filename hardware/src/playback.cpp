@@ -9,6 +9,7 @@ volatile QueueHandle_t playback_filled_buffer_queue;
 
 #define SAMPLES_PER_SECOND       44100
 #define AUDIO_BUFFER_BYTES_TOTAL (SAMPLES_PER_SECOND / 8) * 2 * sizeof(uint16_t)
+#define AUDIO_BUFFER_COUNT       3
 
 static const i2s_config_t i2s_config = {
     .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_TX),
@@ -63,30 +64,32 @@ esp_err_t playback_alloc_audio_buffer(size_t capacity, audio_buffer_t** bufferOu
 }
 
 void playback_task_play_audio_from_buffers(void* pvParameters) {
+    ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL));
+    ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_0, &pin_config));
+    ESP_ERROR_CHECK(i2s_stop(I2S_NUM_0));
+
     boolean within_playback = false;
     audio_buffer_t* current_buffer;
     while (true) {
         BaseType_t got_buffer = xQueueReceive(playback_filled_buffer_queue, &current_buffer, 0);
-        bool can_play_buffer = got_buffer == pdTRUE && current_buffer != nullptr;
-        if (can_play_buffer) {
-            can_play_buffer &= current_buffer->len > 0;
-        }
+        bool can_play_buffer = got_buffer == pdTRUE && current_buffer->len > 0;
         if (!can_play_buffer) {
             if (within_playback) {
-                // TODO: ran out of buffers in playback -> not enough network throughput?. Notify audio source!
+                // TODO: underflow -> not enough network throughput? Notify audio source!
                 within_playback = false;
-                playback_mute();
+                Serial.println("Playback underflow");
+                ESP_ERROR_CHECK(i2s_stop(I2S_NUM_0));
             }
             
             got_buffer = xQueueReceive(playback_filled_buffer_queue, &current_buffer, portMAX_DELAY);
-            if (got_buffer != pdTRUE) {
+            if (got_buffer != pdTRUE || current_buffer->len == 0) {
                 continue;
             }
         }
 
         ESP_ERROR_CHECK(i2s_set_sample_rates(I2S_NUM_0, current_buffer->samples_per_channel_and_second));
+        ESP_ERROR_CHECK(i2s_start(I2S_NUM_0));
         within_playback = true;
-        playback_unmute();
         
         esp_err_t err;
         size_t bufferPos = 0;
@@ -111,45 +114,30 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
 static size_t playback_buffer_capacity = 0;
 
 void playback_initialize() {
-    esp_err_t err;
+    playback_empty_buffer_queue = xQueueCreate(AUDIO_BUFFER_COUNT, sizeof(audio_buffer_t*));
+    playback_filled_buffer_queue = xQueueCreate(AUDIO_BUFFER_COUNT, sizeof(audio_buffer_t*));
 
-    err = i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
-    if (err != ESP_OK) {
-        Serial.printf("Failed to install i2s driver: %d\n", err);
-        abort();
+    playback_buffer_capacity = AUDIO_BUFFER_BYTES_TOTAL / AUDIO_BUFFER_COUNT;
+    for (int i = 0;i < AUDIO_BUFFER_COUNT;i++) {
+        audio_buffer_t* playback_buffer;
+        ESP_ERROR_CHECK(playback_alloc_audio_buffer(playback_buffer_capacity, &playback_buffer));
+        if (xQueueSend(playback_empty_buffer_queue, &playback_buffer, 0) != pdTRUE) {
+            Serial.printf("Failed to queue audio buffer %d; FreeRTOS queue misconfigured?\n", i);
+            abort();
+        }
     }
-
-    err = i2s_set_pin(I2S_NUM_0, &pin_config);
-    if (err != ESP_OK) {
-        Serial.printf("Failed to set i2s pins: %d\n", err);
-        abort();
-    }
-
-    Serial.println("i2s initialized successfully.");
-    playback_empty_buffer_queue = xQueueCreate(2, sizeof(audio_buffer_t*));
-    playback_filled_buffer_queue = xQueueCreate(2, sizeof(audio_buffer_t*));
-
-    playback_buffer_capacity = AUDIO_BUFFER_BYTES_TOTAL / 2;
-    audio_buffer_t* playback_buffer_one;
-    ESP_ERROR_CHECK(playback_alloc_audio_buffer(playback_buffer_capacity, &playback_buffer_one));
-    audio_buffer_t* playback_buffer_two;
-    ESP_ERROR_CHECK(playback_alloc_audio_buffer(playback_buffer_capacity, &playback_buffer_two));
-
-    if (xQueueSend(playback_empty_buffer_queue, &playback_buffer_one, 0) != pdTRUE
-     || xQueueSend(playback_empty_buffer_queue, &playback_buffer_two, 0) != pdTRUE) {
-        Serial.println("FreeRTOS queue misconfigured");
-        abort();
-    }
+    
     Serial.printf("[playback] initialized buffers with %d bytes each\n", playback_buffer_capacity);
 
     TaskHandle_t taskHandle;
-    BaseType_t rtosResult = xTaskCreate(
+    BaseType_t rtosResult = xTaskCreatePinnedToCore(
         playback_task_play_audio_from_buffers,
         "playback",
         configMINIMAL_STACK_SIZE * 4,
         nullptr,
-        5,
-        &taskHandle
+        7,
+        &taskHandle,
+        1
     );
     if (rtosResult != pdPASS)
     {
