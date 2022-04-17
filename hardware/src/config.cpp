@@ -64,13 +64,15 @@ void config_initialize()
     config_event_group = xEventGroupCreate();
 
     TaskHandle_t configTaskHandle;
-    BaseType_t rtosResult = xTaskCreate(
+    BaseType_t rtosResult = xTaskCreatePinnedToCore(
         config_task,
         CONFIG_TASK_NAME,
         configMINIMAL_STACK_SIZE * 10,
         nullptr,
         tskIDLE_PRIORITY,
-        &configTaskHandle);
+        &configTaskHandle,
+        0
+    );
     if (rtosResult != pdPASS)
     {
         Serial.println("Failed to start config interface: OOM");

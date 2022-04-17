@@ -261,7 +261,7 @@ void network_handle_next_client(int server_socket) {
         assert(audio_buffer != nullptr);
         assert(receivedData.bytes_per_sample == 2); // TODO: implement proper error feedback to the transmitter
         audio_buffer->samples_per_channel_and_second = receivedData.samples_per_channel_and_second;
-        adjust_volume_16bit_dual_channel((int16_t*) audio_buffer->data, audio_buffer->len / sizeof(int16_t) / 2, 0.4);
+        adjust_volume_16bit_dual_channel((int16_t*) audio_buffer->data, audio_buffer->len / sizeof(int16_t) / 2, 0.25);
         
         if (audio_buffer->len == 0) {
             playback_hand_back_unused_buffer(audio_buffer);
@@ -367,13 +367,14 @@ void network_initialize() {
     TaskHandle_t taskHandle;
     BaseType_t rtosResult;
     
-    rtosResult = xTaskCreate(
+    rtosResult = xTaskCreatePinnedToCore(
         network_task_reconnect_after_cooldown,
         "net-reconnect",
         configMINIMAL_STACK_SIZE * 2,
         nullptr,
         tskIDLE_PRIORITY,
-        &taskHandle
+        &taskHandle,
+        0
     );
     if (rtosResult != pdPASS)
     {
@@ -381,13 +382,14 @@ void network_initialize() {
         panic();
     }
 
-    rtosResult = xTaskCreate(
+    rtosResult = xTaskCreatePinnedToCore(
         network_task_udp_boradcast_announcement,
         "net-announce",
         configMINIMAL_STACK_SIZE * 10,
         nullptr,
         tskIDLE_PRIORITY,
-        &taskHandle
+        &taskHandle,
+        0
     );
     if (rtosResult != pdPASS)
     {
@@ -395,13 +397,14 @@ void network_initialize() {
         panic();
     }
 
-    rtosResult = xTaskCreate(
+    rtosResult = xTaskCreatePinnedToCore(
         network_task_accept_audio_stream,
         "net-rx",
         configMINIMAL_STACK_SIZE * 10,
         nullptr,
         tskIDLE_PRIORITY,
-        &taskHandle
+        &taskHandle,
+        0
     );
     if (rtosResult != pdPASS)
     {

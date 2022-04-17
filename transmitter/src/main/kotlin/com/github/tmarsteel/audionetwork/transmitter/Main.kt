@@ -28,7 +28,7 @@ fun tx(file: File) {
     BroadcastReceiver(InetSocketAddress(58765)) { announcementMessage, deviceIp ->
         println("Found receiver ${announcementMessage.deviceName} $deviceIp, starting tx")
         val txSocket = Socket(deviceIp, 58764)
-        val buffer = ByteArray(11024)
+        val buffer = ByteArray(audioFormat.floorToNextMultipleOfFrameSize(11024))
         do {
             val nBytesRead = audioIn.readNBytes(buffer, 0, buffer.size)
             val message = AudioData.newBuilder()
@@ -46,6 +46,10 @@ fun tx(file: File) {
 fun AudioFormat.createBufferOfDuration(forDuration: Duration): ByteArray {
     val size = Math.toIntExact(sampleRate.toLong() * forDuration.toNanos() / 1000000000L * (sampleSizeInBits / 8).toLong() * channels.toLong())
     return ByteArray(size)
+}
+
+fun AudioFormat.floorToNextMultipleOfFrameSize(byteCount: Int): Int {
+    return (byteCount / frameSize) * frameSize
 }
 
 class BroadcastReceiver(

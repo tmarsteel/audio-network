@@ -151,13 +151,14 @@ void led_initialize() {
     digitalWrite(PIN_LED_BLUE, HIGH);
     TaskHandle_t taskHandle;
     BaseType_t rtosResult;
-    rtosResult = xTaskCreate(
+    rtosResult = xTaskCreatePinnedToCore(
         led_indicator_task,
         LED_TASK_NAME,
         configMINIMAL_STACK_SIZE * 3,
         nullptr,
         tskIDLE_PRIORITY,
-        &taskHandle
+        &taskHandle,
+        0
     );
     if (rtosResult != pdPASS) {
         Serial.println("Failed to start the led indicator task");
