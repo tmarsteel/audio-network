@@ -7,13 +7,12 @@
 volatile QueueHandle_t playback_empty_buffer_queue;
 volatile QueueHandle_t playback_filled_buffer_queue;
 
-#define SAMPLES_PER_SECOND       44100
-#define AUDIO_BUFFER_BYTES_TOTAL (SAMPLES_PER_SECOND / 8) * 2 * sizeof(uint16_t)
-#define AUDIO_BUFFER_COUNT       2
+#define AUDIO_BUFFER_BYTES_TOTAL (44100 / 8) * 2 * sizeof(uint16_t) // 125ms of audio at 44.1khz 16bit stereo
+#define AUDIO_BUFFER_COUNT       2                                  // split accross two buffers
 
 static const i2s_config_t i2s_config = {
     .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_TX),
-    .sample_rate = SAMPLES_PER_SECOND,
+    .sample_rate = 44100,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
     .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
     .communication_format = I2S_COMM_FORMAT_I2S,
@@ -70,6 +69,7 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
 
     boolean within_playback = false;
     audio_buffer_t* current_buffer;
+    size_t current_sample_rate = 0;
     while (true) {
         BaseType_t got_buffer = xQueueReceive(playback_filled_buffer_queue, &current_buffer, 0);
         bool can_play_buffer = got_buffer == pdTRUE && current_buffer->len > 0;
@@ -87,9 +87,15 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
             }
         }
 
-        ESP_ERROR_CHECK(i2s_set_sample_rates(I2S_NUM_0, current_buffer->samples_per_channel_and_second));
-        ESP_ERROR_CHECK(i2s_start(I2S_NUM_0));
-        within_playback = true;
+        if (current_sample_rate != current_buffer->samples_per_channel_and_second) {
+            ESP_ERROR_CHECK(i2s_set_sample_rates(I2S_NUM_0, current_buffer->samples_per_channel_and_second));
+            current_sample_rate = current_buffer->samples_per_channel_and_second;
+        }
+        
+        if (!within_playback) {
+            ESP_ERROR_CHECK(i2s_start(I2S_NUM_0));
+            within_playback = true;
+        }
         
         esp_err_t err;
         size_t bufferPos = 0;
