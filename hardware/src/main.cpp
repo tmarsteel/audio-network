@@ -9,7 +9,7 @@
 void setup()
 {
     // playback_mute();
-    Serial.begin(50000);
+    Serial.begin(1500000);
     esp_log_level_set("*", ESP_LOG_INFO);
 
     ESP_ERROR_CHECK(esp_event_loop_create_default());
