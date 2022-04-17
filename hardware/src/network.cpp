@@ -97,10 +97,34 @@ wifi_config_t network_await_config() {
     return esp_wifi_config;
 }
 
+void network_scan_and_log() {
+    wifi_scan_config_t scan_config = {
+    };
+    ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true));
+    uint16_t n_aps_found;
+    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&n_aps_found));
+    uint16_t n_aps_to_show =  min(n_aps_found, (uint16_t) 20);
+    wifi_ap_record_t* records = (wifi_ap_record_t*) malloc(sizeof(wifi_ap_record_t) * n_aps_to_show);
+    assert(records != nullptr);
+    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&n_aps_to_show, records));
+    Serial.printf("WiFi Scan result (showing %d of %d)\n", n_aps_to_show, n_aps_found);
+    for (size_t i = 0;i < n_aps_to_show;i++) {
+        wifi_ap_record_t ap_record = records[i];
+        char* bssid_str = format_hex(&ap_record.bssid[0], 6);
+        char ssid_str[34];
+        memcpy(&ssid_str, &ap_record.ssid[0], 33);
+        ssid_str[33] = 0;
+        Serial.printf("SSID=%s (BSSID %s) at %ddbm\n", &ssid_str[0], bssid_str, ap_record.rssi);
+        free(bssid_str);
+    }
+    free(records);
+}
+
 static uint network_connect_retry_attempts = 0;
 static esp_err_t network_esp_event_handler(void* ctx, system_event_t* event) {
     switch (event->event_id) {
         case SYSTEM_EVENT_STA_START:
+            network_scan_and_log();
             return esp_wifi_connect();
             break;
         case SYSTEM_EVENT_STA_GOT_IP:
