@@ -149,10 +149,13 @@ typedef struct {
     audio_buffer_t* target;
 } pb_decode_audio_samples_ctx;
 
+static const char* PB_ERRMSG_AUDIO_CHUNK_TOO_LARGE = "AudioData chunk too large (doesn't fit in a buffer from the playback module)";
+
 bool network_pb_decode_audio_samples(pb_istream_t* stream, const pb_field_t* field, void** arg) {
     audio_buffer_t* audio_buffer = playback_get_next_free_audio_buffer();
     if (stream->bytes_left > audio_buffer->capacity) {
         playback_hand_back_unused_buffer(audio_buffer);
+        stream->errmsg = PB_ERRMSG_AUDIO_CHUNK_TOO_LARGE;
         return false;
     }
 
@@ -189,14 +192,14 @@ bool network_pb_istream_from_socket_callback(pb_istream_t* stream, uint8_t* buff
 
     int bytes_received_total = 0;
     do {
-        int bytes_received = recv(socket, buffer, count - bytes_received_total, 0);
+        int bytes_received = recv(socket, buffer + bytes_received_total, count - bytes_received_total, MSG_WAITALL);
         if (bytes_received < 0) {
             return false;
         }
 
         if (bytes_received == 0) {
             stream->bytes_left = 0;
-            return true;
+            return false;
         }
 
         bytes_received_total += bytes_received;
@@ -258,7 +261,8 @@ void network_handle_next_client(int server_socket) {
         assert(audio_buffer != nullptr);
         assert(receivedData.bytes_per_sample == 2); // TODO: implement proper error feedback to the transmitter
         audio_buffer->samples_per_channel_and_second = receivedData.samples_per_channel_and_second;
-        adjust_volume_16bit_dual_channel((int16_t*) audio_buffer->data, audio_buffer->len / sizeof(int16_t) / 2, 0.05);
+        adjust_volume_16bit_dual_channel((int16_t*) audio_buffer->data, audio_buffer->len / sizeof(int16_t) / 2, 0.08);
+        
         if (audio_buffer->len == 0) {
             playback_hand_back_unused_buffer(audio_buffer);
         } else {
