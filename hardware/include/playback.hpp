@@ -5,7 +5,7 @@ typedef struct {
     void* data;
     size_t capacity;
     size_t len;
-    uint32_t samples_per_channel_and_second;
+    uint32_t sampleRate;
 } audio_buffer_t;
 
 void playback_mute();

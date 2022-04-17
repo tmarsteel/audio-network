@@ -11,7 +11,7 @@
 
 /* Struct definitions */
 typedef struct _AudioData { 
-    uint32_t samples_per_channel_and_second; 
+    uint32_t sample_rate; 
     uint32_t bytes_per_sample; 
     pb_callback_t samples; 
 } AudioData;
@@ -35,7 +35,7 @@ extern "C" {
 #define AudioData_init_zero                      {0, 0, {{NULL}, NULL}}
 
 /* Field tags (for use in manual encoding/decoding) */
-#define AudioData_samples_per_channel_and_second_tag 1
+#define AudioData_sample_rate_tag                1
 #define AudioData_bytes_per_sample_tag           2
 #define AudioData_samples_tag                    3
 #define AudioReceiverAnnouncement_magic_word_tag 1
@@ -53,7 +53,7 @@ X(a, STATIC,   REQUIRED, BOOL,     currently_streaming,   5)
 #define AudioReceiverAnnouncement_DEFAULT NULL
 
 #define AudioData_FIELDLIST(X, a) \
-X(a, STATIC,   REQUIRED, UINT32,   samples_per_channel_and_second,   1) \
+X(a, STATIC,   REQUIRED, UINT32,   sample_rate,       1) \
 X(a, STATIC,   REQUIRED, UINT32,   bytes_per_sample,   2) \
 X(a, CALLBACK, REQUIRED, BYTES,    samples,           3)
 #define AudioData_CALLBACK pb_default_field_callback

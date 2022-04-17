@@ -55,7 +55,7 @@ esp_err_t playback_alloc_audio_buffer(size_t capacity, audio_buffer_t** bufferOu
         .capacity = capacity,
         .len = 0,
         // irrelevant, will be set/changed by the code that brings the audio data in
-        .samples_per_channel_and_second = 44100 
+        .sampleRate = 44100 
     };
 
     *bufferOut = control_struct;
@@ -91,9 +91,9 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
             }
         }
 
-        if (current_sample_rate != current_buffer->samples_per_channel_and_second) {
-            ESP_ERROR_CHECK(i2s_set_sample_rates(I2S_NUM_0, current_buffer->samples_per_channel_and_second));
-            current_sample_rate = current_buffer->samples_per_channel_and_second;
+        if (current_sample_rate != current_buffer->sampleRate) {
+            ESP_ERROR_CHECK(i2s_set_sample_rates(I2S_NUM_0, current_buffer->sampleRate));
+            current_sample_rate = current_buffer->sampleRate;
         }
         
         if (!within_playback) {

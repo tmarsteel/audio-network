@@ -33,7 +33,7 @@ fun tx(file: File) {
             val nBytesRead = audioIn.readNBytes(buffer, 0, buffer.size)
             val message = AudioData.newBuilder()
                 .setBytesPerSample(2)
-                .setSamplesPerChannelAndSecond(audioFormat.sampleRate.toInt())
+                .setSampleRate(audioFormat.sampleRate.toInt())
                 .setSamples(ByteString.copyFrom(buffer, 0, nBytesRead))
                 .build()
             message.writeDelimitedTo(txSocket.getOutputStream())
