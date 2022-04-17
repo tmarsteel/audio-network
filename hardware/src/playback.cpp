@@ -9,7 +9,7 @@ volatile QueueHandle_t playback_filled_buffer_queue;
 
 #define SAMPLES_PER_SECOND       44100
 #define AUDIO_BUFFER_BYTES_TOTAL (SAMPLES_PER_SECOND / 8) * 2 * sizeof(uint16_t)
-#define AUDIO_BUFFER_COUNT       3
+#define AUDIO_BUFFER_COUNT       2
 
 static const i2s_config_t i2s_config = {
     .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_TX),
@@ -18,8 +18,8 @@ static const i2s_config_t i2s_config = {
     .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
     .communication_format = I2S_COMM_FORMAT_I2S,
     .intr_alloc_flags = 0,
-    .dma_buf_count = 8,
-    .dma_buf_len = 1024,
+    .dma_buf_count = 16,
+    .dma_buf_len = 256,
     .use_apll = true};
 
 static const i2s_pin_config_t pin_config = {
