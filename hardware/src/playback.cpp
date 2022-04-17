@@ -70,6 +70,7 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
     boolean within_playback = false;
     audio_buffer_t* current_buffer;
     size_t current_sample_rate = 0;
+    size_t underflow_counter = 0;
     while (true) {
         BaseType_t got_buffer = xQueueReceive(playback_filled_buffer_queue, &current_buffer, 0);
         bool can_play_buffer = got_buffer == pdTRUE && current_buffer->len > 0;
@@ -77,8 +78,11 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
             if (within_playback) {
                 // TODO: underflow -> not enough network throughput? Notify audio source!
                 within_playback = false;
-                Serial.println("Playback underflow");
                 ESP_ERROR_CHECK(i2s_stop(I2S_NUM_0));
+                underflow_counter++;
+                if (underflow_counter % 100 == 0) {
+                    Serial.printf("Underflow at %d\n", underflow_counter);
+                }
             }
             
             got_buffer = xQueueReceive(playback_filled_buffer_queue, &current_buffer, portMAX_DELAY);

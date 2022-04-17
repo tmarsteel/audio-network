@@ -11,6 +11,8 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
+import java.time.Duration
+import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import kotlin.concurrent.thread
 
@@ -19,19 +21,19 @@ fun main(args: Array<String>) {
 }
 
 fun tx(file: File) {
-    val audioFormat = AudioSystem.getAudioFileFormat(file)
-    require(audioFormat.format.channels == 2)
-    require(audioFormat.format.sampleSizeInBits == 16)
+    val audioFormat = AudioSystem.getAudioFileFormat(file).format
+    require(audioFormat.channels == 2)
+    require(audioFormat.sampleSizeInBits == 16)
     val audioIn = AudioSystem.getAudioInputStream(file)
     BroadcastReceiver(InetSocketAddress(58765)) { announcementMessage, deviceIp ->
         println("Found receiver ${announcementMessage.deviceName} $deviceIp, starting tx")
         val txSocket = Socket(deviceIp, 58764)
-        val buffer = ByteArray(4096)
+        val buffer = ByteArray(11024)
         do {
             val nBytesRead = audioIn.readNBytes(buffer, 0, buffer.size)
             val message = AudioData.newBuilder()
                 .setBytesPerSample(2)
-                .setSamplesPerChannelAndSecond(audioFormat.format.sampleRate.toInt())
+                .setSamplesPerChannelAndSecond(audioFormat.sampleRate.toInt())
                 .setSamples(ByteString.copyFrom(buffer, 0, nBytesRead))
                 .build()
             message.writeDelimitedTo(txSocket.getOutputStream())
@@ -39,6 +41,11 @@ fun tx(file: File) {
         txSocket.close()
         println("Tx done")
     }
+}
+
+fun AudioFormat.createBufferOfDuration(forDuration: Duration): ByteArray {
+    val size = Math.toIntExact(sampleRate.toLong() * forDuration.toNanos() / 1000000000L * (sampleSizeInBits / 8).toLong() * channels.toLong())
+    return ByteArray(size)
 }
 
 class BroadcastReceiver(
