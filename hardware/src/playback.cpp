@@ -7,8 +7,8 @@
 volatile QueueHandle_t playback_empty_buffer_queue;
 volatile QueueHandle_t playback_filled_buffer_queue;
 
-#define AUDIO_BUFFER_BYTES_TOTAL (44100 / 4) * 2 * sizeof(uint16_t) // 250ms of audio at 44.1khz 16bit stereo
-#define AUDIO_BUFFER_COUNT       2                                  // split accross two buffers
+#define AUDIO_BUFFER_BYTES_TOTAL 40960 // 250ms of audio at 44.1khz 16bit stereo
+#define AUDIO_BUFFER_COUNT       5     // split accross N buffers
 
 static const i2s_config_t i2s_config = {
     .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_TX),
