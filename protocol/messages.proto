@@ -11,7 +11,6 @@ message AudioReceiverAnnouncement {
 }
 
 message AudioData {
-	required uint32 sample_rate = 1;
-	required uint32 bytes_per_sample = 2;
-	required bytes samples = 3;
+	required bytes opus_encoded_frame = 1;
+	required uint32 sample_rate = 20;
 }
