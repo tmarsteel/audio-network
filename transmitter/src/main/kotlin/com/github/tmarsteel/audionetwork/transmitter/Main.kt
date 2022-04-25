@@ -19,6 +19,7 @@ import java.nio.ByteBuffer
 import java.nio.IntBuffer
 import java.nio.ShortBuffer
 import java.nio.file.Paths
+import java.time.Duration
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import kotlin.concurrent.thread
@@ -116,10 +117,11 @@ fun tx(file: File) {
                 audioIn.format,
                 ProtobufWrappingOpusDownstream(audioIn.format, txSocket.getOutputStream(), false),
                 signal = OpusEncodingOutputStream.Signal.MUSIC,
-                maxEncodedFrameSizeBytes = 4096
+                maxEncodedFrameSizeBytes = 4096,
+                frameSize = Duration.ofMillis(40),
             ).use { opusEncoderOut ->
                 audioIn.copyTo(opusEncoderOut)
-                opusEncoderOut.flush()
+                Thread.sleep(10000)
                 println("Done")
             }
         }

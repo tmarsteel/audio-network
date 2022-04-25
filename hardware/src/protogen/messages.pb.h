@@ -11,9 +11,8 @@
 
 /* Struct definitions */
 typedef struct _AudioData { 
+    pb_callback_t opus_encoded_frame; 
     uint32_t sample_rate; 
-    uint32_t bytes_per_sample; 
-    pb_callback_t samples; 
 } AudioData;
 
 typedef struct _AudioReceiverAnnouncement { 
@@ -30,14 +29,13 @@ extern "C" {
 
 /* Initializer values for message structs */
 #define AudioReceiverAnnouncement_init_default   {0, 0, {{NULL}, NULL}, 0}
-#define AudioData_init_default                   {0, 0, {{NULL}, NULL}}
+#define AudioData_init_default                   {{{NULL}, NULL}, 0}
 #define AudioReceiverAnnouncement_init_zero      {0, 0, {{NULL}, NULL}, 0}
-#define AudioData_init_zero                      {0, 0, {{NULL}, NULL}}
+#define AudioData_init_zero                      {{{NULL}, NULL}, 0}
 
 /* Field tags (for use in manual encoding/decoding) */
-#define AudioData_sample_rate_tag                1
-#define AudioData_bytes_per_sample_tag           2
-#define AudioData_samples_tag                    3
+#define AudioData_opus_encoded_frame_tag         1
+#define AudioData_sample_rate_tag                20
 #define AudioReceiverAnnouncement_magic_word_tag 1
 #define AudioReceiverAnnouncement_mac_address_tag 2
 #define AudioReceiverAnnouncement_device_name_tag 4
@@ -53,9 +51,8 @@ X(a, STATIC,   REQUIRED, BOOL,     currently_streaming,   5)
 #define AudioReceiverAnnouncement_DEFAULT NULL
 
 #define AudioData_FIELDLIST(X, a) \
-X(a, STATIC,   REQUIRED, UINT32,   sample_rate,       1) \
-X(a, STATIC,   REQUIRED, UINT32,   bytes_per_sample,   2) \
-X(a, CALLBACK, REQUIRED, BYTES,    samples,           3)
+X(a, CALLBACK, REQUIRED, BYTES,    opus_encoded_frame,   1) \
+X(a, STATIC,   REQUIRED, UINT32,   sample_rate,      20)
 #define AudioData_CALLBACK pb_default_field_callback
 #define AudioData_DEFAULT NULL
 

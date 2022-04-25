@@ -20,6 +20,7 @@
 #include "protogen/messages.pb.h"
 #include "playback.hpp"
 #include "audio.hpp"
+#include <libopus/opus.h>
 
 static const char* LOGTAG = "network";
 
@@ -42,6 +43,14 @@ void lwip_error_check(err_t err_rc, const char* file, int line) {
 void sock_error_check(int result, const char* file, int line) {
     if (result < 0) {
         Serial.printf("Socket error in %s on line %d: errno %d\n", file, line, errno);
+        abort();
+    }
+}
+
+#define OPUS_ERROR_CHECK(x) opus_error_check(x, __FILE__, __LINE__)
+void opus_error_check(int result, const char* file, int line) {
+    if (result != OPUS_OK) {
+        Serial.printf("Opus error in %s on line %d: error %s (code %d)\n", file, line, opus_strerror(result), result);
         abort();
     }
 }
@@ -196,28 +205,24 @@ bool network_pb_encode_device_name(pb_ostream_t* stream, const pb_field_t* field
 }
 
 typedef struct {
-    // set by network_pb_decode_audio_samples
-    // that function will also set .len
-    audio_buffer_t* target;
-} pb_decode_audio_samples_ctx;
+    void* data;
+    size_t len;
+} pb_bytes_ctxt;
 
-static const char* PB_ERRMSG_AUDIO_CHUNK_TOO_LARGE = "AudioData chunk too large (doesn't fit in a buffer from the playback module)";
+static const char* PB_ERRMSG_OOM = "Out of memory";
 
-bool network_pb_decode_audio_samples(pb_istream_t* stream, const pb_field_t* field, void** arg) {
-    audio_buffer_t* audio_buffer = playback_get_next_free_audio_buffer();
-    if (stream->bytes_left > audio_buffer->capacity) {
-        playback_hand_back_unused_buffer(audio_buffer);
-        stream->errmsg = PB_ERRMSG_AUDIO_CHUNK_TOO_LARGE;
+bool network_pb_decode_bytes(pb_istream_t* stream, const pb_field_t* field, void** arg) {
+    pb_bytes_ctxt* context = (pb_bytes_ctxt*) (*arg);
+    context->data = malloc(stream->bytes_left);
+    if (context->data == nullptr) {
+        stream->errmsg = PB_ERRMSG_OOM;
         return false;
     }
-
-    pb_decode_audio_samples_ctx* context = (pb_decode_audio_samples_ctx*) (*arg);
-    context->target = audio_buffer;
-    context->target->len = stream->bytes_left;
-    bool success = pb_read(stream, (pb_byte_t*) context->target->data, stream->bytes_left);
+    context->len = stream->bytes_left;
+    bool success = pb_read(stream, (pb_byte_t*) context->data, stream->bytes_left);
     if (!success) {
-        context->target = nullptr;
-        playback_hand_back_unused_buffer(audio_buffer);
+        free(context->data);
+        context->data = nullptr;
     }
     return success;
 }
@@ -295,32 +300,52 @@ void network_handle_next_client(int server_socket) {
     SOCK_ERROR_CHECK(client_socket);
 
     pb_istream_t pb_socket_stream = network_pb_istream_from_socket(client_socket);
+    int opus_error;
+    OpusDecoder* opus_decoder = opus_decoder_create(48000, 2, &opus_error);
+    OPUS_ERROR_CHECK(opus_error);
+    
     while (true) {
-        pb_decode_audio_samples_ctx decode_context = {
-            .target = nullptr
+        pb_bytes_ctxt decode_context = {
+            .data = nullptr
         };
         AudioData receivedData;
-        receivedData.samples.funcs.decode = network_pb_decode_audio_samples;
-        receivedData.samples.arg = &decode_context;
+        receivedData.opus_encoded_frame.funcs.decode = network_pb_decode_bytes;
+        receivedData.opus_encoded_frame.arg = &decode_context;
         if (!pb_decode_delimited(&pb_socket_stream, AudioData_fields, &receivedData)) {
-            Serial.printf("Failed to read audio data protobuf (%s), closing connection.\n", pb_socket_stream.errmsg);
-            shutdown(client_socket, 0);
-            close(client_socket);
-            return;
+            const char* errMsg = pb_socket_stream.errmsg;
+            if (errMsg == nullptr) {
+                errMsg = "Unknown";
+            }
+            Serial.printf("Failed to read audio data protobuf (%s), closing connection.\n", errMsg);
+            if (decode_context.data != nullptr) {
+                free(decode_context.data);
+            }
+            break;
         }
 
-        audio_buffer_t* audio_buffer = decode_context.target;
-        assert(audio_buffer != nullptr);
-        assert(receivedData.bytes_per_sample == 2); // TODO: implement proper error feedback to the transmitter
-        audio_buffer->sampleRate = receivedData.sample_rate;
-        adjust_volume_16bit_dual_channel((int16_t*) audio_buffer->data, audio_buffer->len / sizeof(int16_t) / 2, 0.25);
+        audio_buffer_t* target_buffer = playback_get_next_free_audio_buffer();
+        assert(target_buffer != nullptr);
+
+        int nSamplesDecoded = opus_decode(opus_decoder, (unsigned char*) decode_context.data, decode_context.len, (opus_int16*) target_buffer->data, target_buffer->capacity / sizeof(opus_int16) / 2, 0);
+        if (nSamplesDecoded < 0) {
+            OPUS_ERROR_CHECK(nSamplesDecoded);
+        }
+        target_buffer->sampleRate = receivedData.sample_rate;
+        target_buffer->len = nSamplesDecoded * sizeof(int16_t) * 2;
+        free(decode_context.data);
+        adjust_volume_16bit_dual_channel((int16_t*) target_buffer->data, target_buffer->len / sizeof(int16_t) / 2, 0.25);
         
-        if (audio_buffer->len == 0) {
-            playback_hand_back_unused_buffer(audio_buffer);
+        if (target_buffer->len == 0) {
+            playback_hand_back_unused_buffer(target_buffer);
         } else {
-            playback_queue_audio(audio_buffer);
+            playback_queue_audio(target_buffer);
         }
     }
+
+    opus_decoder_destroy(opus_decoder);
+    shutdown(client_socket, 0);
+    close(client_socket);
+    return;
 }
 
 void network_task_reconnect_after_cooldown(void* pvParameters) {
@@ -433,7 +458,7 @@ void network_initialize() {
     rtosResult = xTaskCreatePinnedToCore(
         network_task_udp_boradcast_announcement,
         "net-announce",
-        configMINIMAL_STACK_SIZE * 10,
+        configMINIMAL_STACK_SIZE * 5,
         nullptr,
         tskIDLE_PRIORITY,
         &taskHandle,
@@ -448,7 +473,7 @@ void network_initialize() {
     rtosResult = xTaskCreatePinnedToCore(
         network_task_accept_audio_stream,
         "net-rx",
-        configMINIMAL_STACK_SIZE * 10,
+        configMINIMAL_STACK_SIZE * 20,
         nullptr,
         tskIDLE_PRIORITY,
         &taskHandle,
