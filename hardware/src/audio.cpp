@@ -3,25 +3,31 @@
 #include <math.h>
 #include <Arduino.h>
 #include <SPIFFS.h>
+#include "playback.hpp"
 
 #define M_PI		3.14159265358979323846
 
-void generate_sine_wave_16bit_dual_channel(int frequency, int sampleRate, int16_t* buffer, int sampleCount) {
+void generate_sine_wave_16bit_dual_channel(int frequency, audio_buffer_t* target) {
+    int sampleCount = target->capacity / sizeof(uint16_t) / 2;
     double radiansPerSecond = 2.0 * M_PI * frequency;
-    double radiansPerSample = radiansPerSecond / ((double) sampleRate);
+    double radiansPerSample = radiansPerSecond / ((double) target->sampleRate);
     for (int nSample = 0;nSample < sampleCount;nSample++) {
         double sampleAsDouble = sin(nSample * radiansPerSample);
         int16_t sample = (int16_t) (sampleAsDouble * 0x7FFF);
 
         // dual channel
-        buffer[nSample * 2] = sample;
-        buffer[nSample * 2 + 1] = sample;
+        ((uint16_t*) target->data)[nSample * 2] = sample;
+        ((uint16_t*) target->data)[nSample * 2 + 1] = sample;
     }
+
+    target->len = sampleCount * sizeof(uint16_t) * 2;
 }
 
-void adjust_volume_16bit_dual_channel(int16_t* buffer, int sampleCount, double volume) {
+void adjust_volume_16bit_dual_channel(double volume, audio_buffer_t* buffer) {
+    int sampleCount = buffer->capacity / sizeof(uint16_t) / 2;
     for (int pos = 0;pos < sampleCount * 2;pos++) {
-        buffer[pos] = (uint16_t) ((double) buffer[pos] * volume);
+        uint16_t sample = ((uint16_t*) buffer->data)[pos];
+        ((uint16_t*) buffer->data)[pos] = (uint16_t) ((double) sample * volume);
     }
 }
 

@@ -333,7 +333,7 @@ void network_handle_next_client(int server_socket) {
         target_buffer->sampleRate = receivedData.sample_rate;
         target_buffer->len = nSamplesDecoded * sizeof(int16_t) * 2;
         free(decode_context.data);
-        adjust_volume_16bit_dual_channel((int16_t*) target_buffer->data, target_buffer->len / sizeof(int16_t) / 2, 0.25);
+        adjust_volume_16bit_dual_channel(0.25, target_buffer);
         
         if (target_buffer->len == 0) {
             playback_hand_back_unused_buffer(target_buffer);
