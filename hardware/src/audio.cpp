@@ -5,14 +5,18 @@
 #include <SPIFFS.h>
 #include "playback.hpp"
 
-#define M_PI		3.14159265358979323846
+#define M_2PI		(2*3.14159265358979323846)
 
-void generate_sine_wave_16bit_dual_channel(int frequency, audio_buffer_t* target) {
+void generate_sine_wave_16bit_dual_channel(int frequency, audio_buffer_t* target, double* radians) {
     int sampleCount = target->capacity / sizeof(uint16_t) / 2;
-    double radiansPerSecond = 2.0 * M_PI * frequency;
+    double radiansPerSecond = M_2PI * frequency;
     double radiansPerSample = radiansPerSecond / ((double) target->sampleRate);
     for (int nSample = 0;nSample < sampleCount;nSample++) {
-        double sampleAsDouble = sin(nSample * radiansPerSample);
+        *radians += radiansPerSample;
+        if (*radians > M_2PI) {
+            *radians -= M_2PI;
+        }
+        double sampleAsDouble = sin(*radians);
         int16_t sample = (int16_t) (sampleAsDouble * 0x7FFF);
 
         // dual channel
