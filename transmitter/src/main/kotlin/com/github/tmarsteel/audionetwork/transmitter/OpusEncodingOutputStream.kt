@@ -42,7 +42,7 @@ class OpusEncodingOutputStream(
         nativeEncoder = Opus.INSTANCE.opus_encoder_create(audioFormat.sampleRate.toInt(), audioFormat.channels, application.value, error)
         throwOnOpusError(error.get())
         check(nativeEncoder != null && nativeEncoder.value != null)
-        throwOnOpusError(Opus.INSTANCE.opus_encoder_ctl(nativeEncoder, Opus.OPUS_SET_BITRATE_REQUEST, 64000))
+        throwOnOpusError(Opus.INSTANCE.opus_encoder_ctl(nativeEncoder, Opus.OPUS_SET_BITRATE_REQUEST, 92000))
         throwOnOpusError(Opus.INSTANCE.opus_encoder_ctl(nativeEncoder, Opus.OPUS_SET_COMPLEXITY_REQUEST, complexity))
         throwOnOpusError(Opus.INSTANCE.opus_encoder_ctl(nativeEncoder, Opus.OPUS_SET_SIGNAL_REQUEST, signal.value))
         throwOnOpusError(Opus.INSTANCE.opus_encoder_ctl(nativeEncoder, Opus.OPUS_SET_MAX_BANDWIDTH_REQUEST, when(audioFormat.sampleRate.toInt()) {

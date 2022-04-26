@@ -19,7 +19,6 @@
 #include <pb_decode.h>
 #include "protogen/messages.pb.h"
 #include "playback.hpp"
-#include "audio.hpp"
 #include <libopus/opus.h>
 
 static const char* LOGTAG = "network";
@@ -47,13 +46,13 @@ void sock_error_check(int result, const char* file, int line) {
     }
 }
 
-#define OPUS_ERROR_CHECK(x) opus_error_check(x, __FILE__, __LINE__)
+/*#define OPUS_ERROR_CHECK(x) opus_error_check(x, __FILE__, __LINE__)
 void opus_error_check(int result, const char* file, int line) {
     if (result != OPUS_OK) {
         Serial.printf("Opus error in %s on line %d: error %s (code %d)\n", file, line, opus_strerror(result), result);
         abort();
     }
-}
+}*/
 
 ip4_addr_t network_get_broadcast_address(ip4_addr_t* sample_ip_in_network, ip4_addr_t* netmask) {
     uint32_t network = sample_ip_in_network->addr & netmask->addr;
@@ -300,9 +299,7 @@ void network_handle_next_client(int server_socket) {
     SOCK_ERROR_CHECK(client_socket);
 
     pb_istream_t pb_socket_stream = network_pb_istream_from_socket(client_socket);
-    int opus_error;
-    OpusDecoder* opus_decoder = opus_decoder_create(48000, 2, &opus_error);
-    OPUS_ERROR_CHECK(opus_error);
+    playback_start_new_stream();
     
     while (true) {
         pb_bytes_ctxt decode_context = {
@@ -323,26 +320,11 @@ void network_handle_next_client(int server_socket) {
             break;
         }
 
-        audio_buffer_t* target_buffer = playback_get_next_free_audio_buffer();
-        assert(target_buffer != nullptr);
-
-        int nSamplesDecoded = opus_decode(opus_decoder, (unsigned char*) decode_context.data, decode_context.len, (opus_int16*) target_buffer->data, target_buffer->capacity / sizeof(opus_int16) / 2, 0);
-        if (nSamplesDecoded < 0) {
-            OPUS_ERROR_CHECK(nSamplesDecoded);
-        }
-        target_buffer->sampleRate = receivedData.sample_rate;
-        target_buffer->len = nSamplesDecoded * sizeof(int16_t) * 2;
+        ESP_ERROR_CHECK(playback_queue_audio(decode_context.data, decode_context.len));
         free(decode_context.data);
-        adjust_volume_16bit_dual_channel(0.25, target_buffer);
-        
-        if (target_buffer->len == 0) {
-            playback_hand_back_unused_buffer(target_buffer);
-        } else {
-            playback_queue_audio(target_buffer);
-        }
     }
 
-    opus_decoder_destroy(opus_decoder);
+    //opus_decoder_destroy(opus_decoder);
     shutdown(client_socket, 0);
     close(client_socket);
     return;

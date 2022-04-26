@@ -29,6 +29,7 @@ fun main(args: Array<String>) {
     OpusLibrary.loadFromJar()
     println(Opus.INSTANCE.opus_get_version_string())
     tx(File(args[0]))
+    //recode2()
 }
 
 fun recode() {
@@ -118,7 +119,7 @@ fun tx(file: File) {
                 ProtobufWrappingOpusDownstream(audioIn.format, txSocket.getOutputStream(), false),
                 signal = OpusEncodingOutputStream.Signal.MUSIC,
                 maxEncodedFrameSizeBytes = 4096,
-                frameSize = Duration.ofMillis(40),
+                frameSize = Duration.ofMillis(60),
             ).use { opusEncoderOut ->
                 audioIn.copyTo(opusEncoderOut)
                 Thread.sleep(10000)
@@ -149,7 +150,7 @@ class BroadcastReceiver(
         val packet = DatagramPacket(ByteArray(1024), 1024)
         while(true) {
             try {
-                socket.receive(packet)
+                /*socket.receive(packet)
                 val message = try {
                     AudioReceiverAnnouncement.parseFrom(ByteBuffer.wrap(packet.data, 0, packet.length))
                 }
@@ -160,9 +161,15 @@ class BroadcastReceiver(
                 if (message.magicWord != 0x2C5DA044) {
                     println("Received what seems to be valid protobuf, but the magic word is incorrect.")
                     continue
-                }
+                }*/
 
-                onAnnouncementReceived(message, packet.address)
+                val message = AudioReceiverAnnouncement.newBuilder()
+                    .setDeviceName("foo")
+                    .setMagicWord(0)
+                    .setMacAddress(0L)
+                    .setCurrentlyStreaming(false)
+                    .build();
+                onAnnouncementReceived(message, InetAddress.getByName("192.168.1.103"))
                 return
             } catch (ex: InterruptedException) {
                 if (closed) {
@@ -184,12 +191,17 @@ class ProtobufWrappingOpusDownstream(
     private val closeDownstream: Boolean = true
 ) : OpusEncodingOutputStream.Downstream {
 
+    var nFrames = 0
     override fun onEncodedFrameAvailable(data: ByteBuffer) {
         val message = AudioData.newBuilder()
             .setSampleRate(audioFormat.sampleRate.toInt())
             .setOpusEncodedFrame(ByteString.copyFrom(data))
             .build()
         message.writeDelimitedTo(outputStream)
+        if (nFrames >= 5) {
+            nFrames = 0
+            Thread.sleep(100)
+        }
         outputStream.flush()
     }
 
@@ -198,6 +210,15 @@ class ProtobufWrappingOpusDownstream(
             outputStream.close()
         }
     }
+}
+
+fun format(data: ByteBuffer): String {
+    val output = StringBuilder()
+    while (data.hasRemaining()) {
+        output.append(data.get().toUByte().toString(16).uppercase().padStart(2, '0'))
+    }
+    data.flip()
+    return output.toString()
 }
 
 fun format(data: ByteArray, length: Int, nColumns: Int = 10): String {
