@@ -3,11 +3,15 @@
 #include "driver/i2s.h"
 #include <FreeRTOS.h>
 #include <Arduino.h>
-#include <libopus/opus.h>
+#include <opus.h>
 #include "runtime.hpp"
 
-#define DECODE_AT_SAMPLE_RATE 48000
-#define AUDIO_BUFFER_SIZE     (sizeof(opus_int16) * 48 * 60 * 2) // 60ms at 48khz stereo. This is the maximum according to the opus documentation
+#define DECODE_AT_SAMPLE_RATE      48000
+#define AUDIO_BUFFER_SIZE          (sizeof(opus_int16) * 48 * 60 * 2) // 60ms at 48khz stereo. This is the maximum according to the opus documentation
+#define DMA_BUFFER_COUNT           16
+#define DMA_BUFFER_SIZE            720
+#define DMA_BUFFER_DURATION_MICROS (DMA_BUFFER_SIZE*DMA_BUFFER_COUNT / 48 / 2 / sizeof(opus_int16) * 1000)
+#define DMA_BUFFER_DURATION_TICKS  (DMA_BUFFER_DURATION_MICROS / 1000 / portTICK_PERIOD_MS)
 
 #define OPUS_ERROR_CHECK(x) opus_error_check(x, __FILE__, __LINE__)
 void opus_error_check(int result, const char* file, int line) {
@@ -30,7 +34,7 @@ static const i2s_config_t i2s_config = {
     .communication_format = I2S_COMM_FORMAT_I2S,
     .intr_alloc_flags = 0,
     .dma_buf_count = 16,
-    .dma_buf_len = 256,
+    .dma_buf_len = 720,
     .use_apll = true};
 
 static const i2s_pin_config_t pin_config = {
@@ -82,7 +86,7 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
     size_t underflow_counter = 0;
     while (true) {
         encoded_opus_frame_t* encoded_frame;
-        BaseType_t got_buffer = xQueueReceive(qEncodedOpusFrames, &encoded_frame, 0);
+        BaseType_t got_buffer = xQueueReceive(qEncodedOpusFrames, &encoded_frame, max((unsigned int) 0, DMA_BUFFER_DURATION_TICKS - 10)); // 10 ticks for decoding
         bool can_play_buffer = got_buffer == pdTRUE && encoded_frame->len > 0;
         if (!can_play_buffer) {
             if (within_playback) {
@@ -90,9 +94,7 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
                 within_playback = false;
                 ESP_ERROR_CHECK(i2s_stop(I2S_NUM_0));
                 underflow_counter++;
-                if (underflow_counter % 20 == 0) {
-                    Serial.printf("Underflow at %d\n", underflow_counter);
-                }
+                Serial.printf("Underflow at %d\n", underflow_counter);
             }
             
             got_buffer = xQueueReceive(qEncodedOpusFrames, &encoded_frame, portMAX_DELAY);

@@ -19,7 +19,7 @@
 #include <pb_decode.h>
 #include "protogen/messages.pb.h"
 #include "playback.hpp"
-#include <libopus/opus.h>
+#include <opus.h>
 
 static const char* LOGTAG = "network";
 
