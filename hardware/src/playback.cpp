@@ -1,7 +1,7 @@
 #include "playback.hpp"
 #include "pins.hpp"
 #include "driver/i2s.h"
-#include <FreeRTOS.h>
+#include <freertos/FreeRTOS.h>
 #include <Arduino.h>
 #include <opus.h>
 #include "runtime.hpp"
@@ -31,7 +31,7 @@ static const i2s_config_t i2s_config = {
     .sample_rate = DECODE_AT_SAMPLE_RATE,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
     .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-    .communication_format = I2S_COMM_FORMAT_I2S,
+    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
     .intr_alloc_flags = 0,
     .dma_buf_count = 16,
     .dma_buf_len = 720,

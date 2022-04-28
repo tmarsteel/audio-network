@@ -1,4 +1,4 @@
-#include <FreeRTOS.h>
+#include <freertos/FreeRTOS.h>
 #include <Arduino.h>
 #include "network.hpp"
 #include "runtime.hpp"
@@ -9,7 +9,7 @@
 #include <esp_wifi.h>
 #include <esp_event.h>
 #include <esp_interface.h>
-#include <esp_event_loop.h>
+#include <esp_event.h>
 #include <lwip/err.h>
 #include <lwip/sys.h>
 #include <lwip/dhcp.h>
@@ -46,13 +46,11 @@ void sock_error_check(int result, const char* file, int line) {
     }
 }
 
-/*#define OPUS_ERROR_CHECK(x) opus_error_check(x, __FILE__, __LINE__)
-void opus_error_check(int result, const char* file, int line) {
-    if (result != OPUS_OK) {
-        Serial.printf("Opus error in %s on line %d: error %s (code %d)\n", file, line, opus_strerror(result), result);
-        abort();
-    }
-}*/
+char* network_esp_ipaddr_ntoa(esp_ip4_addr* addr) {
+    ip4_addr_t addr2;
+    addr2.addr = addr->addr;
+    return ip4addr_ntoa(&addr2);
+}
 
 ip4_addr_t network_get_broadcast_address(ip4_addr_t* sample_ip_in_network, ip4_addr_t* netmask) {
     uint32_t network = sample_ip_in_network->addr & netmask->addr;
@@ -154,43 +152,48 @@ bool network_scan_and_set_bssi_with_best_signal(wifi_sta_config_t* config) {
 }
 
 static uint network_connect_retry_attempts = 0;
-static esp_err_t network_esp_event_handler(void* ctx, system_event_t* event) {
-    switch (event->event_id) {
-        case SYSTEM_EVENT_STA_START:
-            wifi_config_t wifi_config;
-            ESP_ERROR_CHECK(esp_wifi_get_config(ESP_IF_WIFI_STA, &wifi_config));
-            network_scan_and_set_bssi_with_best_signal(&wifi_config.sta);
-            ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
-            return esp_wifi_connect();
-            break;
-        case SYSTEM_EVENT_STA_GOT_IP:
-            Serial.printf("[network] Got IP-Address %s\n", ip4addr_ntoa(&event->event_info.got_ip.ip_info.ip));
-            xEventGroupSetBits(network_event_group, NETWORK_EVENT_GROUP_BIT_CONNECTED);
-            break;
-        case SYSTEM_EVENT_STA_DISCONNECTED:
-            {
-                Serial.println("[network] Disconnected from AP");
-                xEventGroupClearBits(network_event_group, NETWORK_EVENT_GROUP_BIT_CONNECTED);
-                if (network_connect_retry_attempts < NETWORK_MAX_CONNECT_RETRY_ATTEMPTS) {
-                    esp_err_t connect_error = esp_wifi_connect();
-                    network_connect_retry_attempts++;
-                    return connect_error;
-                } 
+static void network_esp_event_handler(void* ctx, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        wifi_config_t wifi_config;
+        ESP_ERROR_CHECK(esp_wifi_get_config(WIFI_IF_STA, &wifi_config));
 
-                Serial.printf(
-                    "[network] Could not reconnect after %d attempts. Trying again in %dms\n",
-                    NETWORK_MAX_CONNECT_RETRY_ATTEMPTS,
-                    NETWORK_RECONNECT_COOLDOWN_MILLIS
-                );
-                xEventGroupSetBits(network_event_group, NETWORK_EVENT_GROUP_BIT_RECONNECT_COOLDOWN);
-                network_connect_retry_attempts = 0;
-                break;
-            }
-        default:
-            break;
+        network_scan_and_set_bssi_with_best_signal(&wifi_config.sta);
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+
+        esp_wifi_connect();
+        return;
     }
 
-    return ESP_OK;
+    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        Serial.printf(
+            "[network] Got Network config; IP=" IPSTR ", Netmask=" IPSTR ", Default Gateway=" IPSTR "\n",
+            IP2STR(&event->ip_info.ip),
+            IP2STR(&event->ip_info.netmask),
+            IP2STR(&event->ip_info.gw)
+        );
+        xEventGroupSetBits(network_event_group, NETWORK_EVENT_GROUP_BIT_CONNECTED);
+        return;
+    }
+
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        Serial.println("[network] Disconnected from AP");
+        xEventGroupClearBits(network_event_group, NETWORK_EVENT_GROUP_BIT_CONNECTED);
+        if (network_connect_retry_attempts < NETWORK_MAX_CONNECT_RETRY_ATTEMPTS) {
+            esp_err_t connect_error = esp_wifi_connect();
+            network_connect_retry_attempts++;
+            return;
+        } 
+
+        Serial.printf(
+            "[network] Could not reconnect after %d attempts. Trying again in %dms\n",
+            NETWORK_MAX_CONNECT_RETRY_ATTEMPTS,
+            NETWORK_RECONNECT_COOLDOWN_MILLIS
+        );
+        xEventGroupSetBits(network_event_group, NETWORK_EVENT_GROUP_BIT_RECONNECT_COOLDOWN);
+        network_connect_retry_attempts = 0;
+        return;
+    }
 }
 
 bool network_pb_encode_device_name(pb_ostream_t* stream, const pb_field_t* field, void* const* arg) {
@@ -274,7 +277,7 @@ pb_istream_t network_pb_istream_from_socket(int socket) {
 
 AudioReceiverAnnouncement network_initialize_announcement() {
     uint8_t mac[6];
-    ESP_ERROR_CHECK(esp_wifi_get_mac(ESP_IF_WIFI_STA, mac));
+    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, mac));
 
     uint64_t macAsLong = 0;
     for (int i = 0;i < 6;i++) {
@@ -402,19 +405,22 @@ void network_task_accept_audio_stream(void* pvParameters) {
 
 void network_initialize() {
     network_event_group = xEventGroupCreate();
-    tcpip_adapter_init();
-    ESP_ERROR_CHECK(esp_event_loop_init(network_esp_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_netif_init());
+    esp_netif_create_default_wifi_sta();
 
     wifi_config_t wifi_config = network_await_config();
 
     wifi_init_config_t init_config = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init_config));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &network_esp_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &network_esp_event_handler, NULL));
+
     ESP_ERROR_CHECK(esp_wifi_set_mode(wifi_mode_t::WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());   
 
     uint8_t mac[6];
-    ESP_ERROR_CHECK(esp_wifi_get_mac(ESP_IF_WIFI_STA, mac));
+    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, mac));
     char* mac_as_string = format_hex(mac, 6);
     Serial.printf("[network] WiFi started with MAC Address %s\n", mac_as_string);
     free(mac_as_string);

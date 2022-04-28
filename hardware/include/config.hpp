@@ -1,4 +1,4 @@
-#include <FreeRTOS.h>
+#include <freertos/FreeRTOS.h>
 
 #define CONFIG_TASK_NAME "config"
 
