@@ -169,7 +169,7 @@ class BroadcastReceiver(
                     .setMacAddress(0L)
                     .setCurrentlyStreaming(false)
                     .build();
-                onAnnouncementReceived(message, InetAddress.getByName("192.168.1.103"))
+                onAnnouncementReceived(message, InetAddress.getByName("192.168.1.101"))
                 return
             } catch (ex: InterruptedException) {
                 if (closed) {

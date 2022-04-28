@@ -8,7 +8,7 @@
 
 #define DECODE_AT_SAMPLE_RATE      48000
 #define AUDIO_BUFFER_SIZE          (sizeof(opus_int16) * 48 * 60 * 2) // 60ms at 48khz stereo. This is the maximum according to the opus documentation
-#define DMA_BUFFER_COUNT           16
+#define DMA_BUFFER_COUNT           8
 #define DMA_BUFFER_SIZE            720
 #define DMA_BUFFER_DURATION_MICROS (DMA_BUFFER_SIZE*DMA_BUFFER_COUNT / 48 / 2 / sizeof(opus_int16) * 1000)
 #define DMA_BUFFER_DURATION_TICKS  (DMA_BUFFER_DURATION_MICROS / 1000 / portTICK_PERIOD_MS)
@@ -33,8 +33,8 @@ static const i2s_config_t i2s_config = {
     .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
     .communication_format = I2S_COMM_FORMAT_STAND_I2S,
     .intr_alloc_flags = 0,
-    .dma_buf_count = 16,
-    .dma_buf_len = 720,
+    .dma_buf_count = DMA_BUFFER_COUNT,
+    .dma_buf_len = DMA_BUFFER_SIZE,
     .use_apll = true};
 
 static const i2s_pin_config_t pin_config = {
@@ -118,8 +118,6 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
         decoded_data_size = nSamplesDecoded * 2 * sizeof(opus_int16);
         free(encoded_frame->data);
         free(encoded_frame);
-        
-        playback_adjust_volume_16bit_dual_channel(0.2, decoded_audio_buffer, decoded_data_size);
 
         esp_err_t err;
         int bufferPos = 0;
