@@ -1,0 +1,65 @@
+syntax = "proto2";
+
+option java_multiple_files = true;
+option java_package = "com.github.tmarsteel.audionetwork.protocol";
+
+/**
+ * UDP port 58765
+ */
+message BroadcastMessage {
+	/** must be set to 0x2C5DA044; to avoid clashes with other protocols on the same port */
+	required uint32 magic_word = 1;
+	oneof message {
+		/** to the broadcast address */
+		bool discovery_request = 2;
+		/** back to the sender of a discovery request */
+		DiscoveryResponse discovery_response = 3;
+	}
+}
+
+message DiscoveryResponse {
+	required uint32 protocol_version = 1;
+	required uint64 mac_address = 2;
+	required string device_name = 3;
+	required bool currently_streaming = 4;
+	/** the return value of opus_get_version_string() */
+	required string opus_version = 5;
+}
+
+/**
+ * TCP port 58764
+ */
+message ToReceiver {
+	oneof message {
+		AudioData audio_data = 1;
+	}
+}
+
+/**
+ * TCP port 58764
+ */
+message ToTransmitter {
+	oneof message {
+		ReceiverInformation receiver_information = 1;
+		ReceiverError error = 2;
+	}
+}
+
+message ReceiverInformation {
+	required DiscoveryResponse discovery_data = 1;
+	/** maximum number of bytes that AudioData.opus_encoded_frame can be */
+	required uint32 max_encoded_frame_size = 2;
+	/** size of the decode buffer. Decoding happens at 48kHz 16bit stereo. */
+	required uint32 max_decoded_frame_size = 3;
+}
+
+message ReceiverError {
+	/** there was no new audio data when playback of the previous frame finished */
+	required bool audio_underflow = 1;
+	/** when an AudioData packet could not be decoded */
+	required bool audio_decode_error = 2;
+}
+
+message AudioData {
+	required bytes opus_encoded_frame = 1;
+}

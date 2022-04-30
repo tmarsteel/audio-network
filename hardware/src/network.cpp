@@ -17,7 +17,7 @@
 #include <AsyncUDP.h>
 #include <pb_encode.h>
 #include <pb_decode.h>
-#include "protogen/messages.pb.h"
+#include "protogen/ip.pb.h"
 #include "playback.hpp"
 #include <opus.h>
 
@@ -39,11 +39,12 @@ void lwip_error_check(err_t err_rc, const char* file, int line) {
 }
 
 #define SOCK_ERROR_CHECK(x) sock_error_check(x, __FILE__, __LINE__)
-void sock_error_check(int result, const char* file, int line) {
+size_t sock_error_check(size_t result, const char* file, int line) {
     if (result < 0) {
         Serial.printf("Socket error in %s on line %d: errno %d\n", file, line, errno);
         abort();
     }
+    return result;
 }
 
 char* network_esp_ipaddr_ntoa(esp_ip4_addr* addr) {
@@ -275,7 +276,7 @@ pb_istream_t network_pb_istream_from_socket(int socket) {
     };
 }
 
-AudioReceiverAnnouncement network_initialize_announcement() {
+BroadcastMessage network_initialize_discovery_response() {
     uint8_t mac[6];
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, mac));
 
@@ -284,13 +285,19 @@ AudioReceiverAnnouncement network_initialize_announcement() {
         macAsLong |= ((uint64_t) mac[i]) << (i * 8);
     }
 
-    AudioReceiverAnnouncement announcement = AudioReceiverAnnouncement_init_zero;
-    announcement.magic_word = 0x2C5DA044;
-    announcement.mac_address = macAsLong;
-    announcement.currently_streaming = false;
-    announcement.device_name.funcs.encode = network_pb_encode_device_name;
+    const char* opus_version_string = opus_get_version_string();
+    size_t opus_version_string_len = strlen(opus_version_string);
+    assert(opus_version_string_len < 128);
 
-    return announcement;
+    BroadcastMessage broadcast = BroadcastMessage_init_zero;
+    broadcast.magic_word = 0x2C5DA044;
+    broadcast.which_message = BroadcastMessage_discovery_response_tag;
+    broadcast.message.discovery_response.currently_streaming = false; // TODO: fill with actual value
+    broadcast.message.discovery_response.mac_address = macAsLong;
+    broadcast.message.discovery_response.protocol_version = 1;
+    memcpy(broadcast.message.discovery_response.opus_version, opus_version_string, opus_version_string_len);
+
+    return broadcast;
 }
 
 void network_handle_next_client(int server_socket) {
@@ -344,40 +351,51 @@ void network_task_reconnect_after_cooldown(void* pvParameters) {
     }
 }
 
-void network_task_udp_boradcast_announcement(void* pvParameters) {
-    pb_byte_t* protobuf_buffer = (pb_byte_t*) malloc(512);
-    int broadcast_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-    if (broadcast_socket < 0) {
-        Serial.println("Failed to create a socket for publishing announcements");
-        abort();
+#define BROADCAST_MAGIC_WORD 0x2C5DA044
+void network_task_discovery(void* pvParameters) {
+    size_t protobuf_buffer_len = 768;
+    pb_byte_t* protobuf_buffer = (pb_byte_t*) malloc(protobuf_buffer_len);
+    int broadcast_socket = SOCK_ERROR_CHECK(socket(AF_INET, SOCK_DGRAM, IPPROTO_IP));
+    {
+        sockaddr_in listen_addr;
+        listen_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        listen_addr.sin_family = AF_INET;
+        listen_addr.sin_port = htons(NETWORK_PORT_DISCOVERY);
+        SOCK_ERROR_CHECK(bind(broadcast_socket, (struct sockaddr*) &listen_addr, sizeof(listen_addr)));
     }
 
-    AudioReceiverAnnouncement announcement = network_initialize_announcement();
+    BroadcastMessage discovery_response = network_initialize_discovery_response();
     
     while(true) {
         EventBits_t networkEventBits = xEventGroupWaitBits(network_event_group, NETWORK_EVENT_GROUP_BIT_CONNECTED, pdFALSE, pdFALSE, portMAX_DELAY);
-        if ((networkEventBits & NETWORK_EVENT_GROUP_BIT_CONNECTED) > 0) {
-            pb_ostream_t pb_stream = pb_ostream_from_buffer(protobuf_buffer, 512);
-            if (!pb_encode(&pb_stream, AudioReceiverAnnouncement_fields, &announcement)) {
-                Serial.println("Buffer too small to hold announcement message.");
-                abort();
-            }
-
-            tcpip_adapter_ip_info_t ip_info;
-            ESP_ERROR_CHECK(tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info));
-            ip4_addr_t broadcast_address_4 = network_get_broadcast_address(&ip_info.ip, &ip_info.netmask);
-            sockaddr_in broadcast_socket_address;
-            broadcast_socket_address.sin_addr.s_addr = broadcast_address_4.addr;
-            broadcast_socket_address.sin_family = AF_INET;
-            broadcast_socket_address.sin_port = htons(NETWORK_PORT_ANNOUNCE);
-
-            int err = sendto(broadcast_socket, protobuf_buffer, pb_stream.bytes_written, 0, (struct sockaddr*) &broadcast_socket_address, sizeof(broadcast_socket_address));
-            if (err < 0) {
-                Serial.printf("Failed to send announcement: errno %d\n", errno);
-            }
-            
-            vTaskDelay(NETWORK_ANNOUNCEMENT_INTERVAL_MILLIS * portTICK_RATE_MS);
+        if ((networkEventBits & NETWORK_EVENT_GROUP_BIT_CONNECTED) == 0) {
+            continue;
         }
+
+        struct sockaddr_storage sender_addr;
+        socklen_t sender_addr_len = sizeof(sender_addr);
+        size_t n_bytes_received = SOCK_ERROR_CHECK(recvfrom(broadcast_socket, protobuf_buffer, protobuf_buffer_len, 0, (struct sockaddr *) &sender_addr, &sender_addr_len));
+
+        BroadcastMessage received_message;
+        pb_istream_t received_buffer_istream = pb_istream_from_buffer(protobuf_buffer, n_bytes_received);
+        if (!pb_decode(&received_buffer_istream, BroadcastMessage_fields, &received_message)) {
+            Serial.printf("Failed to decode broadcast message: %s\n", received_buffer_istream.errmsg);
+            continue;
+        }
+        if (received_message.magic_word != BROADCAST_MAGIC_WORD) {
+            continue;
+        }
+        if (received_message.which_message != BroadcastMessage_discovery_request_tag) {
+            continue;
+        }
+            
+        pb_ostream_t out_stream = pb_ostream_from_buffer(protobuf_buffer, protobuf_buffer_len);
+        if (!pb_encode(&out_stream, BroadcastMessage_fields, &discovery_response)) {
+            Serial.printf("Failed to encode discovery response: %s\n", out_stream.errmsg);
+            abort();
+        }
+
+        SOCK_ERROR_CHECK(sendto(broadcast_socket, protobuf_buffer, out_stream.bytes_written, 0, (struct sockaddr *) &sender_addr, sizeof(sender_addr)));
     }
 }
 
@@ -444,7 +462,7 @@ void network_initialize() {
     }
 
     rtosResult = xTaskCreatePinnedToCore(
-        network_task_udp_boradcast_announcement,
+        network_task_discovery,
         "net-announce",
         configMINIMAL_STACK_SIZE * 5,
         nullptr,

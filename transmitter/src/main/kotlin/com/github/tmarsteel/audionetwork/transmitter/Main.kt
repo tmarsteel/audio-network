@@ -1,19 +1,13 @@
 package com.github.tmarsteel.audionetwork.transmitter
 
-import club.minnced.opus.util.OpusLibrary
 import com.github.tmarsteel.audionetwork.protocol.AudioData
-import com.github.tmarsteel.audionetwork.protocol.AudioReceiverAnnouncement
 import com.google.protobuf.ByteString
-import com.google.protobuf.InvalidProtocolBufferException
+import kotlinx.coroutines.runBlocking
 import tomp2p.opuswrapper.Opus
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.OutputStream
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
-import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.IntBuffer
@@ -22,14 +16,10 @@ import java.nio.file.Paths
 import java.time.Duration
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
-import kotlin.concurrent.thread
 import kotlin.io.path.readText
 
 fun main(args: Array<String>) {
-    OpusLibrary.loadFromJar()
-    println(Opus.INSTANCE.opus_get_version_string())
-    tx(File(args[0]))
-    //recode2()
+    println(runBlocking { discoverReceivers() })
 }
 
 fun recode() {
@@ -109,79 +99,26 @@ fun recode2() {
 }
 
 fun tx(file: File) {
-    BroadcastReceiver(InetSocketAddress(58765)) { announcementMessage, deviceIp ->
-        println("Found receiver ${announcementMessage.deviceName} $deviceIp, starting tx")
-        val txSocket = Socket(deviceIp, 58764)
+    val receiver = runBlocking { discoverReceivers() }
+        .firstOrNull()
+        ?: error("Found no receivers")
 
-        AudioSystem.getAudioInputStream(file).use { audioIn ->
-            OpusEncodingOutputStream(
-                audioIn.format,
-                ProtobufWrappingOpusDownstream(audioIn.format, txSocket.getOutputStream(), false),
-                signal = OpusEncodingOutputStream.Signal.MUSIC,
-                maxEncodedFrameSizeBytes = 4096,
-                frameSize = Duration.ofMillis(60),
-            ).use { opusEncoderOut ->
-                audioIn.copyTo(opusEncoderOut)
-                Thread.sleep(10000)
-                println("Done")
-            }
+    println("Transmitting to ${receiver.inetAddress}")
+
+    val txSocket = Socket(receiver.inetAddress, 58764)
+
+    AudioSystem.getAudioInputStream(file).use { audioIn ->
+        OpusEncodingOutputStream(
+            audioIn.format,
+            ProtobufWrappingOpusDownstream(audioIn.format, txSocket.getOutputStream(), false),
+            signal = OpusEncodingOutputStream.Signal.MUSIC,
+            maxEncodedFrameSizeBytes = 4096,
+            frameSize = Duration.ofMillis(60),
+        ).use { opusEncoderOut ->
+            audioIn.copyTo(opusEncoderOut)
+            Thread.sleep(10000)
+            println("Done")
         }
-    }
-}
-
-class BroadcastReceiver(
-    val address: InetSocketAddress,
-    private val onAnnouncementReceived: (AudioReceiverAnnouncement, InetAddress) -> Unit
-) {
-    private val socket = DatagramSocket(address).apply {
-        broadcast = true
-    }
-    private val thread = thread(start = true, name = "broadcast-rx", block = this::listen)
-    @Volatile
-    private var closed = false
-
-    init {
-        Runtime.getRuntime().addShutdownHook(thread(start = false) {
-            stop()
-        })
-    }
-
-    private fun listen() {
-        val packet = DatagramPacket(ByteArray(1024), 1024)
-        while(true) {
-            try {
-                /*socket.receive(packet)
-                val message = try {
-                    AudioReceiverAnnouncement.parseFrom(ByteBuffer.wrap(packet.data, 0, packet.length))
-                }
-                catch (ex: InvalidProtocolBufferException) {
-                    println("Received invalid protobuf data, ignoring.")
-                    continue
-                }
-                if (message.magicWord != 0x2C5DA044) {
-                    println("Received what seems to be valid protobuf, but the magic word is incorrect.")
-                    continue
-                }*/
-
-                val message = AudioReceiverAnnouncement.newBuilder()
-                    .setDeviceName("foo")
-                    .setMagicWord(0)
-                    .setMacAddress(0L)
-                    .setCurrentlyStreaming(false)
-                    .build();
-                onAnnouncementReceived(message, InetAddress.getByName("192.168.1.101"))
-                return
-            } catch (ex: InterruptedException) {
-                if (closed) {
-                    return
-                }
-            }
-        }
-    }
-
-    fun stop() {
-        closed = true
-        thread.interrupt()
     }
 }
 
@@ -194,7 +131,6 @@ class ProtobufWrappingOpusDownstream(
     var nFrames = 0
     override fun onEncodedFrameAvailable(data: ByteBuffer) {
         val message = AudioData.newBuilder()
-            .setSampleRate(audioFormat.sampleRate.toInt())
             .setOpusEncodedFrame(ByteString.copyFrom(data))
             .build()
         message.writeDelimitedTo(outputStream)

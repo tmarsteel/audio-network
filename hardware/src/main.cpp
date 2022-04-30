@@ -4,7 +4,7 @@
 #include "config.hpp"
 #include "network.hpp"
 #include "playback.hpp"
-#include <esp_event_loop.h>
+#include <esp_event.h>
 
 void setup()
 {
