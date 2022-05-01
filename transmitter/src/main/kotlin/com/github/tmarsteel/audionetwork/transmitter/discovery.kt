@@ -68,7 +68,6 @@ suspend fun discoverReceivers(
 
             val receivePacket = DatagramPacket(ByteArray(1024), 1024)
             while (true) {
-                println("receiving...")
                 try {
                     socket.receive(receivePacket)
                 }
