@@ -2,6 +2,7 @@ package com.github.tmarsteel.audionetwork.transmitter
 
 import java.nio.BufferOverflowException
 import java.nio.BufferUnderflowException
+import java.nio.ByteBuffer
 
 class ByteRingBuffer(val capacity: Int) {
     private val buffer = ByteArray(capacity)
@@ -12,49 +13,56 @@ class ByteRingBuffer(val capacity: Int) {
     val remainingWrite: Int
         get() = buffer.size - remainingRead
 
-    fun put(source: ByteArray, offset: Int, length: Int) {
-        require(source.size >= offset + length)
-        if (remainingWrite < length) {
+    fun put(source: ByteBuffer) = put(source, source.remaining())
+    fun put(source: ByteBuffer, nBytes: Int) {
+        require(source.remaining() >= nBytes)
+        if (remainingWrite < nBytes) {
             throw BufferOverflowException()
         }
 
         val nBytesUntilEnd = buffer.size - (dataStart + remainingRead)
-        if (nBytesUntilEnd >= length) {
-            System.arraycopy(source, offset, this.buffer, dataStart + remainingRead, length)
-            remainingRead += length
+        if (nBytesUntilEnd >= nBytes) {
+            source.get(this.buffer, dataStart + remainingRead, nBytes)
+            remainingRead += nBytes
             return
         }
 
         if (nBytesUntilEnd <= 0) {
-            System.arraycopy(source, offset, this.buffer, (dataStart + remainingRead) % buffer.size, length)
-            remainingRead += length
+            source.get(this.buffer, (dataStart + remainingRead) % this.buffer.size, nBytes)
+            remainingRead += nBytes
             return
         }
 
-        put(source, offset, nBytesUntilEnd)
-        put(source, offset + nBytesUntilEnd, length - nBytesUntilEnd)
+        put(source, nBytesUntilEnd)
+        put(source, nBytes - nBytesUntilEnd)
     }
 
-    fun put(source: ByteArray) = put(source, 0, source.size)
+    fun put(source: ByteArray, offset: Int, length: Int) {
+        put(ByteBuffer.wrap(source, offset, length))
+    }
+
+    fun put(source: ByteArray) = put(ByteBuffer.wrap(source))
     fun put(byte: Byte) = put(ByteArray(1) { byte }, 0, 1)
 
-    fun get(target: ByteArray, offset: Int, length: Int) {
-        require(target.size >= offset + length)
-        if (remainingRead < length) {
+    fun get(target: ByteBuffer) = get(target, target.remaining().coerceAtMost(remainingRead))
+    fun get(target: ByteBuffer, nBytes: Int) {
+        require(target.remaining() >= nBytes)
+        if (remainingRead < nBytes) {
             throw BufferUnderflowException()
         }
 
         val nBytesUntilEnd = buffer.size - dataStart
-        if (nBytesUntilEnd >= length) {
-            System.arraycopy(buffer, dataStart, target, offset, length)
-            dataStart = (dataStart + length) % buffer.size
-            remainingRead -= length
+        if (nBytesUntilEnd >= nBytes) {
+            target.put(this.buffer, dataStart, nBytes)
+            dataStart = (dataStart + nBytes) % buffer.size
+            remainingRead -= nBytes
             return
         }
 
-        get(target, offset, nBytesUntilEnd)
-        get(target, offset + nBytesUntilEnd, length - nBytesUntilEnd)
+        get(target, nBytesUntilEnd)
+        get(target, nBytes - nBytesUntilEnd)
     }
+    fun get(target: ByteArray, offset: Int, length: Int) = get(ByteBuffer.wrap(target, offset, length), length)
 
     fun get(target: ByteArray) = get(target, 0, target.size)
     fun get(): Byte {
