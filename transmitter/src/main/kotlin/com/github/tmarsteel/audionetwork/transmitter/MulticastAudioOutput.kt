@@ -114,7 +114,7 @@ class MulticastAudioOutput(
         val maxRawFrameSizeBytes = actualReceivers.minOf { it.receiverInformation.maxDecodedFrameSize }
         opusEncoder.frameSize = OpusEncoder.SUPPORTED_FRAME_SIZES
             .map { frameSize -> frameSize to OpusEncoder.frameSizeToBytes(opusEncoder.inputFormat, frameSize) }
-            .filter { (_, frameSizeInBytes) -> frameSizeInBytes < maxRawFrameSizeBytes }
+            .filter { (_, frameSizeInBytes) -> frameSizeInBytes <= maxRawFrameSizeBytes }
             .maxOfOrNull { (frameSize, _) -> frameSize }
             ?: throw IllegalStateException("Cannot accommodate all receivers: receive buffer too small")
         opusEncoder.maxEncodedFrameSizeBytes = actualReceivers.minOf { it.receiverInformation.maxEncodedFrameSize }
