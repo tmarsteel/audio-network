@@ -76,8 +76,18 @@ class MulticastAudioOutput(
         sendEncodedFrames(opusEncoder.submitAudioData(rawDataInOpusInputFormat))
     }
 
+    /**
+     * The receive buffer on the receivers is pretty small. When playing back an audio file (with practically infinite
+     * input data rate), it is easily overfilled. The TCP retransmissions then actually cause underflow. Sending data
+     * at the same pace as it gets played back solves this problem.
+     *
+     * Models the buffer usage in the receivers in milliseconds of audio data.
+     */
+    private val sendRateLimiter = LeakyBucket(1200, 1000)
+
     private suspend fun sendEncodedFrames(encodedFrames: Collection<ByteBuffer>) {
         encodedFrames.forEach { encodedFrame ->
+            sendRateLimiter.put(opusEncoder.frameSize.toMillis())
             actualReceivers.forEach { receiver ->
                 receiver.queueEncodedOpusFrame(encodedFrame)
                 encodedFrame.flip()

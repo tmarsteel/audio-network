@@ -84,9 +84,10 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
 
     boolean within_playback = false;
     size_t underflow_counter = 0;
+    size_t decode_duration_ticks_avg = 0;
     while (true) {
         encoded_opus_frame_t* encoded_frame;
-        BaseType_t got_buffer = xQueueReceive(qEncodedOpusFrames, &encoded_frame, max((unsigned int) 0, DMA_BUFFER_DURATION_TICKS - 10)); // 10 ticks for decoding
+        BaseType_t got_buffer = xQueueReceive(qEncodedOpusFrames, &encoded_frame, max((unsigned int) 0, DMA_BUFFER_DURATION_TICKS - decode_duration_ticks_avg - 1)); // 10 ticks for decoding
         bool can_play_buffer = got_buffer == pdTRUE && encoded_frame->len > 0;
         if (!can_play_buffer) {
             if (within_playback) {
@@ -95,6 +96,9 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
                 ESP_ERROR_CHECK(i2s_stop(I2S_NUM_0));
                 underflow_counter++;
                 Serial.printf("Underflow at %d\n", underflow_counter);
+                if (underflow_counter % 10 == 0) {
+                    Serial.printf("AVG(decode_duration_ticks) = %d\n", decode_duration_ticks_avg);
+                }
             }
             
             got_buffer = xQueueReceive(qEncodedOpusFrames, &encoded_frame, portMAX_DELAY);
@@ -103,12 +107,12 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
             }
         }
 
-
         if (!within_playback) {
             ESP_ERROR_CHECK(i2s_start(I2S_NUM_0));
             within_playback = true;
         }
         
+        unsigned long decode_started_at = micros();
         size_t decoded_data_size = sizeof(opus_int16) * 2 * opus_packet_get_samples_per_frame((unsigned char*) encoded_frame->data, DECODE_AT_SAMPLE_RATE);
         assert(decoded_data_size <= AUDIO_BUFFER_SIZE);
         int nSamplesDecoded = opus_decode(current_opus_decoder, (unsigned char*) encoded_frame->data, encoded_frame->len, (opus_int16*) decoded_audio_buffer, AUDIO_BUFFER_SIZE, 0);
@@ -118,6 +122,12 @@ void playback_task_play_audio_from_buffers(void* pvParameters) {
         decoded_data_size = nSamplesDecoded * 2 * sizeof(opus_int16);
         free(encoded_frame->data);
         free(encoded_frame);
+        size_t decode_duration_ticks = (((size_t) (micros() - decode_started_at)) + (1000 * portTICK_PERIOD_MS) - 1) / (1000 * portTICK_PERIOD_MS);
+        if (decode_duration_ticks_avg == 0) {
+            decode_duration_ticks_avg = decode_duration_ticks;
+        } else {
+            decode_duration_ticks_avg = (decode_duration_ticks_avg + decode_duration_ticks) / 2;
+        }
 
         esp_err_t err;
         int bufferPos = 0;
