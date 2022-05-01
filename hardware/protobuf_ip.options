@@ -1,2 +1,3 @@
 DiscoveryResponse.device_name   max_size:128
 DiscoveryResponse.opus_version  max_size:128
+AudioData                       callback_function:"network_pb_callback_audio_data"

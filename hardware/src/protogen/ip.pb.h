@@ -158,7 +158,8 @@ X(a, STATIC,   REQUIRED, BOOL,     audio_decode_error,   2)
 
 #define AudioData_FIELDLIST(X, a) \
 X(a, CALLBACK, REQUIRED, BYTES,    opus_encoded_frame,   1)
-#define AudioData_CALLBACK pb_default_field_callback
+extern bool network_pb_callback_audio_data(pb_istream_t *istream, pb_ostream_t *ostream, const pb_field_t *field);
+#define AudioData_CALLBACK network_pb_callback_audio_data
 #define AudioData_DEFAULT NULL
 
 extern const pb_msgdesc_t BroadcastMessage_msg;

@@ -21,6 +21,8 @@
 #include "playback.hpp"
 #include <opus.h>
 
+#define MAX_ENCODED_FRAME_SIZE 4096
+
 static const char* LOGTAG = "network";
 
 static EventGroupHandle_t network_event_group = nullptr;
@@ -213,21 +215,48 @@ typedef struct {
 } pb_bytes_ctxt;
 
 static const char* PB_ERRMSG_OOM = "Out of memory";
+static const char* PB_ERRMSG_MAX_ENCODED_FRAME_SIZE_EXCEEDED = "Encoded frame exceeds max size";
 
-bool network_pb_decode_bytes(pb_istream_t* stream, const pb_field_t* field, void** arg) {
-    pb_bytes_ctxt* context = (pb_bytes_ctxt*) (*arg);
-    context->data = malloc(stream->bytes_left);
-    if (context->data == nullptr) {
-        stream->errmsg = PB_ERRMSG_OOM;
-        return false;
+bool network_pb_callback_audio_data(pb_istream_t *istream, pb_ostream_t *ostream, const pb_field_t *field) {
+    assert(istream != nullptr && ostream == nullptr);
+    if (field->tag == AudioData_opus_encoded_frame_tag) {
+        if (istream->bytes_left > MAX_ENCODED_FRAME_SIZE) {
+            istream->errmsg = PB_ERRMSG_MAX_ENCODED_FRAME_SIZE_EXCEEDED;
+            return false;
+        }
+        
+        pb_bytes_ctxt* field_value = (pb_bytes_ctxt*) malloc(sizeof(pb_bytes_ctxt));
+        if (field_value == nullptr) {
+            istream->errmsg = PB_ERRMSG_OOM;
+            return false;
+        }
+        field_value->len = istream->bytes_left;
+        field_value->data = malloc(istream->bytes_left);
+        if (field_value->data == nullptr) {
+            istream->errmsg = PB_ERRMSG_OOM;
+            return false;
+        }
+        
+        if (!pb_read(istream, (pb_byte_t*) field_value->data, istream->bytes_left)) {
+            return false;
+        }
+        
+        ((AudioData*) field->message)->opus_encoded_frame.arg = field_value;
+        return true;
     }
-    context->len = stream->bytes_left;
-    bool success = pb_read(stream, (pb_byte_t*) context->data, stream->bytes_left);
-    if (!success) {
-        free(context->data);
-        context->data = nullptr;
+
+    return pb_default_field_callback(istream, ostream, field);
+}
+
+void network_pb_bytes_ctxt_destroy(pb_bytes_ctxt* ctxt) {
+    free(ctxt->data);
+    free(ctxt);
+}
+
+void network_pb_audio_data_destroy(AudioData* data) {
+    if (data->opus_encoded_frame.arg != nullptr) {
+        network_pb_bytes_ctxt_destroy((pb_bytes_ctxt*) data->opus_encoded_frame.arg);
     }
-    return success;
 }
 
 bool network_pb_istream_from_socket_callback(pb_istream_t* stream, uint8_t* buffer, size_t count) {
@@ -236,9 +265,8 @@ bool network_pb_istream_from_socket_callback(pb_istream_t* stream, uint8_t* buff
     }
 
     int socket = (int) (stream->state);
-    uint8_t one_byte;
     if (buffer == NULL) {
-        assert(false);
+        uint8_t one_byte;
         int err = recv(socket, &one_byte, 1, 0);
         if (err == 0) {
             return count == 0;
@@ -276,6 +304,55 @@ pb_istream_t network_pb_istream_from_socket(int socket) {
     };
 }
 
+bool network_pb_ostream_from_socket_callback(pb_ostream_t* stream, const uint8_t* buf, size_t count) {
+    int nBytesWrittenTotal = 0;
+    while (nBytesWrittenTotal < count) {
+        int nBytesWritten = write((int) stream->state, &buf[nBytesWrittenTotal], count - nBytesWrittenTotal);
+        if (nBytesWritten == -1) {
+            switch(errno) {
+                case EBADF:
+                    stream->errmsg = "Bad File Descriptor";
+                    break;
+                case EDESTADDRREQ:
+                    stream->errmsg = "Destination address required";
+                    break;
+                case EFAULT:
+                    stream->errmsg = "Segmentation fault";
+                    break;
+                case EINTR:
+                    stream->errmsg = "Interrupted";
+                    break;
+                case EINVAL:
+                    stream->errmsg = "input value";
+                    break;
+                case EIO:
+                    stream->errmsg = "io error (EIO)";
+                    break;
+                case EPERM:
+                    stream->errmsg = "Permission denied.";
+                    break;
+                default:
+                    stream->errmsg = "Unknown";
+                    break;
+            }
+
+            return false;
+        }
+
+        nBytesWrittenTotal += nBytesWritten;
+    }
+
+    return true;
+}
+
+pb_ostream_t network_pb_ostream_from_socket(int socket) {
+    return pb_ostream_s {
+        .callback = network_pb_ostream_from_socket_callback,
+        .state = (void*) socket,
+        .max_size = SIZE_MAX
+    };
+}
+
 BroadcastMessage network_initialize_discovery_response() {
     uint8_t mac[6];
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, mac));
@@ -305,36 +382,53 @@ void network_handle_next_client(int server_socket) {
     socklen_t clientAddrLen = (socklen_t) sizeof(clientAddr);
     Serial.println("[network] waiting for a trasmitter to connect");
     int client_socket = accept(server_socket, (sockaddr*) &clientAddr, &clientAddrLen);
-    Serial.printf("[network] transmitter %d connected, starting playback\n", clientAddr.sin_addr.s_addr);
     SOCK_ERROR_CHECK(client_socket);
+    Serial.printf("[network] transmitter %d connected\n", clientAddr.sin_addr.s_addr);
+    pb_ostream_t pb_socket_ostream = network_pb_ostream_from_socket(client_socket);
+    {
+        ToTransmitter helloMessage = ToTransmitter_init_zero;
+        helloMessage.which_message = ToTransmitter_receiver_information_tag;
+        helloMessage.message.receiver_information.discovery_data = network_initialize_discovery_response().message.discovery_response;
+        helloMessage.message.receiver_information.max_encoded_frame_size = 4096;
+        helloMessage.message.receiver_information.max_decoded_frame_size = playback_get_maximum_frame_size_bytes();
+        if (!pb_encode_delimited(&pb_socket_ostream, ToTransmitter_fields, &helloMessage)) {
+            const char* errMsg = pb_socket_ostream.errmsg;
+            if (errMsg == nullptr) {
+                errMsg = "Unknown";
+            }
+            Serial.printf("Failed to write hello message, closing connection: %s\n", errMsg);
+            shutdown(client_socket, 0);
+            close(client_socket);
+            return;
+        }
+    }
 
-    pb_istream_t pb_socket_stream = network_pb_istream_from_socket(client_socket);
+    pb_istream_t pb_socket_istream = network_pb_istream_from_socket(client_socket);
     playback_start_new_stream();
     
     while (true) {
-        pb_bytes_ctxt decode_context = {
-            .data = nullptr
-        };
-        AudioData receivedData;
-        receivedData.opus_encoded_frame.funcs.decode = network_pb_decode_bytes;
-        receivedData.opus_encoded_frame.arg = &decode_context;
-        if (!pb_decode_delimited(&pb_socket_stream, AudioData_fields, &receivedData)) {
-            const char* errMsg = pb_socket_stream.errmsg;
+        ToReceiver toReceiver = ToReceiver_init_zero;
+        if (!pb_decode_delimited(&pb_socket_istream, ToReceiver_fields, &toReceiver)) {
+            const char* errMsg = pb_socket_istream.errmsg;
             if (errMsg == nullptr) {
                 errMsg = "Unknown";
             }
             Serial.printf("Failed to read audio data protobuf (%s), closing connection.\n", errMsg);
-            if (decode_context.data != nullptr) {
-                free(decode_context.data);
-            }
             break;
         }
 
-        ESP_ERROR_CHECK(playback_queue_audio(decode_context.data, decode_context.len));
-        free(decode_context.data);
+        if (toReceiver.which_message != ToReceiver_audio_data_tag) {
+            Serial.println("unknown message, closing connection.");
+            break;
+        }
+
+        pb_bytes_ctxt* audio_data = (pb_bytes_ctxt*) toReceiver.message.audio_data.opus_encoded_frame.arg;
+        assert(audio_data != nullptr);
+
+        ESP_ERROR_CHECK(playback_queue_audio(audio_data->data, audio_data->len));
+        network_pb_audio_data_destroy(&toReceiver.message.audio_data);
     }
 
-    //opus_decoder_destroy(opus_decoder);
     shutdown(client_socket, 0);
     close(client_socket);
     return;
@@ -422,6 +516,7 @@ void network_task_accept_audio_stream(void* pvParameters) {
 }
 
 void network_initialize() {
+
     network_event_group = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_netif_init());
     esp_netif_create_default_wifi_sta();
