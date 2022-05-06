@@ -54,7 +54,7 @@ class LeakyBucket(
      * Puts the given amount in the bucket, possibly waiting with [delay] if necessary.
      * @throws IllegalArgumentException if `amount > capacity` (call can never succeed)
      */
-    suspend fun put(amount: Long) {
+    suspend fun waitForCapacity(amount: Long) {
         do {
             val delay = tryPut(amount)
             if (delay != null) {

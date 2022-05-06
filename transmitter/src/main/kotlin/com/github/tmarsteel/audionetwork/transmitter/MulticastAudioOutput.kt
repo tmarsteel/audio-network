@@ -87,7 +87,7 @@ class MulticastAudioOutput(
 
     private suspend fun sendEncodedFrames(encodedFrames: Collection<ByteBuffer>) {
         encodedFrames.forEach { encodedFrame ->
-            sendRateLimiter.put(opusEncoder.frameSize.toMillis())
+            sendRateLimiter.waitForCapacity(opusEncoder.frameSize.toMillis())
             actualReceivers.forEach { receiver ->
                 receiver.queueEncodedOpusFrame(encodedFrame)
                 encodedFrame.flip()
